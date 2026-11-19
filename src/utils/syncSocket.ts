@@ -20,8 +20,9 @@ class SyncSocketService {
     // 在同一個主機/區網下，自動連線當前 host origin
     this.socket = io({
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
+      // 斷線就一直重連（不設上限）：主機重啟或網路斷一下，恢復後自動接回，不用人去重新整理
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     this.socket.on('connect', () => {
