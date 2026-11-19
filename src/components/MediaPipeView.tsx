@@ -823,13 +823,8 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                 waveCount: 0,
                 resetCount: (plant.resetCount || 0) + 1,
               };
-            } else if (Math.abs(plant.remainingSeconds - remaining) > 0.08) {
-              hasChanges = true;
-              return {
-                ...plant,
-                remainingSeconds: remaining,
-              };
             }
+            // 倒數數字由 Plant 裡的倒數小圓圈自己算，不在這裡每 80ms 更新整頁
           }
 
           return plant;

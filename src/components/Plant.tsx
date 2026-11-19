@@ -1,7 +1,53 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PlantItem } from '../types';
 import { RotateCcw, Hand } from 'lucide-react';
+
+/**
+ * 撥開後的倒數小圓圈：自己每 0.1 秒算剩幾秒，只重畫這個小圓圈，
+ * 不再讓整個主畫面跟著倒數一直重畫。
+ */
+const CountdownRing: React.FC<{ pushedAt: number | null; durationSec: number }> = ({
+  pushedAt,
+  durationSec,
+}) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  const remaining = pushedAt ? Math.max(0, durationSec - (now - pushedAt) / 1000) : durationSec;
+  const strokeDashoffset = 88 * (1 - remaining / durationSec);
+
+  return (
+    <>
+      {/* Circular progress ring */}
+      <div className="relative w-4 h-4 flex items-center justify-center">
+        <svg className="w-4 h-4 -rotate-90" viewBox="0 0 32 32">
+          <circle cx="16" cy="16" r="14" fill="none" stroke="#262626" strokeWidth="3.5" />
+          <circle
+            cx="16"
+            cy="16"
+            r="14"
+            fill="none"
+            stroke="#4CA6A8"
+            strokeWidth="3.5"
+            strokeDasharray="88"
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            className="transition-[stroke-dashoffset] duration-100 ease-linear"
+          />
+        </svg>
+        <span className="absolute text-[8px] font-bold text-zinc-200">{Math.ceil(remaining)}</span>
+      </div>
+
+      <span className="text-[10px] text-zinc-300 tracking-tight whitespace-nowrap">
+        {remaining > 0 ? `${remaining.toFixed(0)}s` : '復位中'}
+      </span>
+    </>
+  );
+};
 
 interface PlantProps {
   plant: PlantItem;
@@ -43,11 +89,6 @@ export const Plant: React.FC<PlantProps> = ({
 
   // Wave excited twitch
   const waveExcited = plant.waveCount > 0 && !plant.isPushed;
-
-  // Countdown ring calculation (預設 10 秒)
-  const durationSec = totalDuration || 10;
-  const progressRatio = Math.max(0, plant.remainingSeconds / durationSec);
-  const strokeDashoffset = 88 * (1 - progressRatio);
 
   // Shared state-driven animation values
   // Consistent transition-all duration-700 ease-out prevents any teleportation or jittering
@@ -180,38 +221,7 @@ export const Plant: React.FC<PlantProps> = ({
                 onReset(plant.id);
               }}
             >
-              {/* Circular progress ring */}
-              <div className="relative w-4 h-4 flex items-center justify-center">
-                <svg className="w-4 h-4 -rotate-90" viewBox="0 0 32 32">
-                  <circle
-                    cx="16"
-                    cy="16"
-                    r="14"
-                    fill="none"
-                    stroke="#262626"
-                    strokeWidth="3.5"
-                  />
-                  <circle
-                    cx="16"
-                    cy="16"
-                    r="14"
-                    fill="none"
-                    stroke="#4CA6A8"
-                    strokeWidth="3.5"
-                    strokeDasharray="88"
-                    strokeDashoffset={strokeDashoffset}
-                    strokeLinecap="round"
-                    className="transition-[stroke-dashoffset] duration-100 ease-linear"
-                  />
-                </svg>
-                <span className="absolute text-[8px] font-bold text-zinc-200">
-                  {Math.ceil(plant.remainingSeconds)}
-                </span>
-              </div>
-
-              <span className="text-[10px] text-zinc-300 tracking-tight whitespace-nowrap">
-                {plant.remainingSeconds > 0 ? `${plant.remainingSeconds.toFixed(0)}s` : '復位中'}
-              </span>
+              <CountdownRing pushedAt={plant.pushedAt} durationSec={totalDuration || 10} />
 
               <button
                 type="button"
