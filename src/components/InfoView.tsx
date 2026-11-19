@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { animalAudio } from '../utils/animalAudio';
 import { useScreenRatio } from '../hooks/useScreenRatio';
+import { useRightClickControls } from '../hooks/useRightClickControls';
 
 // 全套木柵貓空 7 款植物完整資料庫（依茶山垂直生態鏈排序）
 const ALL_DEFAULT_MUZHA_PLANTS: MuzhaPlantInfo[] = [
@@ -113,6 +114,8 @@ const ALL_DEFAULT_MUZHA_PLANTS: MuzhaPlantInfo[] = [
 export const InfoView: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { isPortrait } = useScreenRatio();
+  // 展示模式：頂部連線燈號、看板名稱、全螢幕鈕平常隱藏，接滑鼠按右鍵才出現
+  const showControls = useRightClickControls();
 
   // 專屬看板型態判斷 (支援 query params: ?type=leaves, ?type=animals, ?type=landscape)
   // 1. Board 1 (leaves): 專屬於「撥開葉子 / 植物生態誌」，忽略動物與風景事件
@@ -388,6 +391,8 @@ export const InfoView: React.FC = () => {
       {/* ───────────────────────────────────────────────────────────── */}
       <header
         className={`relative z-20 w-full flex items-center justify-between bg-transparent ${
+          showControls ? '' : 'invisible'
+        } ${
           isPortrait ? 'portrait-safe-top pb-2' : 'px-6 py-3'
         }`}
       >

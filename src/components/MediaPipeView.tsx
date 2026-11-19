@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useMediaPipe } from '../hooks/useMediaPipe';
 import { useLeafHandTracking } from '../hooks/useLeafHandTracking';
 import { useScreenRatio } from '../hooks/useScreenRatio';
+import { useRightClickControls } from '../hooks/useRightClickControls';
 import {
   VideoCoverProjection,
   IDENTITY_VIDEO_PROJECTION,
@@ -144,6 +145,10 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
   // 原生 Fullscreen 狀態 (跨瀏覽器監聽同步)
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // 展示模式：平常不顯示任何按鈕面板，接滑鼠按右鍵才叫出設定
+  const showControls = useRightClickControls();
+  const immersive = isFullscreen || !showControls;
 
   // 自動偵測螢幕比例與直／橫方向 (Portrait / Landscape)，同步根元素 .is-portrait
   const { isPortrait, isWideLandscape, width: screenWidth, height: screenHeight } = useScreenRatio();
@@ -912,7 +917,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     }
     const timer = window.setTimeout(recalcVideoProjection, 60);
     return () => window.clearTimeout(timer);
-  }, [isPortrait, screenWidth, screenHeight, isFullscreen, isPhoneFrame, recalcVideoProjection]);
+  }, [isPortrait, screenWidth, screenHeight, immersive, isPhoneFrame, recalcVideoProjection]);
 
   // 透過 ResizeObserver 與 video resize 即時追蹤互動畫布尺寸變化，確保互動座標精準對齊
   useEffect(() => {
@@ -943,7 +948,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   return (
     <div
       className={`relative w-screen h-[100dvh] font-sans select-none overflow-hidden bg-[#0A0A0A] transition-all duration-300 ${
-        isFullscreen
+        immersive
           ? 'flex items-center justify-center p-0'
           : isPortrait
           ? 'portrait-stage-canvas block p-0'
@@ -958,7 +963,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       {/*   不擠壓亦不遮擋中央主互動區域                                  */}
       {/* - 橫式寬螢幕：停靠於右側控制欄上方                              */}
       {/* ───────────────────────────────────────────────────────────── */}
-      {!isFullscreen && (
+      {!immersive && (
         <div
           className={`flex flex-col gap-1.5 transition-all duration-300 ${
             isPortrait
@@ -1089,7 +1094,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
         ref={viewportRef}
         id="unified-ar-viewport"
         className={`overflow-hidden transition-all duration-300 flex items-center justify-center bg-black ${
-          isFullscreen
+          immersive
             ? 'fixed inset-0 z-50 w-screen h-[100dvh] max-w-none max-h-none rounded-none border-none p-0'
             : isPortrait
             ? 'fixed inset-0 z-10 w-screen h-[100dvh] max-w-none max-h-none rounded-none border-none p-0'
@@ -1106,7 +1111,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
         <div
           ref={stageRef}
           className={`relative h-full overflow-hidden flex items-center justify-center bg-black transition-all duration-300 ${
-            isFullscreen
+            immersive
               ? isPortrait
                 ? 'w-full'
                 : 'w-auto max-w-full aspect-[9/16]'
@@ -1114,7 +1119,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
           }`}
         >
           {/* 原生全螢幕切換按鈕：橫式視窗或全螢幕時呈現（直式非全螢幕時移至頂部導覽列避免重疊） */}
-          {(isFullscreen || !isPortrait) && (
+          {showControls && (isFullscreen || !isPortrait) && (
             <button
               onClick={toggleFullscreen}
               className="absolute z-55 p-2.5 rounded-full bg-[#1A1A1A] hover:bg-[#28887A] text-[#4CA6A8] hover:text-white border-none shadow-none transition-all duration-200 active:scale-90 pointer-events-auto cursor-pointer"
@@ -1133,12 +1138,12 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
           )}
 
           {/* Camera Notice Toast Banner (Non-blocking, allows full interaction) */}
-          {cameraError && (
+          {showControls && cameraError && (
             <div
               className="absolute left-4 right-4 sm:right-14 z-45 flex items-center justify-between gap-2 px-3 py-2 rounded-xl dark-glow-card text-zinc-100 text-xs animate-fade-in pointer-events-auto"
               style={{
                 top:
-                  isPortrait && !isFullscreen
+                  isPortrait && !immersive
                     ? 'calc(var(--safe-top, 0px) + 6.8rem)'
                     : '1rem',
               }}
@@ -1226,7 +1231,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       {/*   預設精簡高度並支援收合測試面板，確保中央互動區域完全不被遮擋     */}
       {/* - 橫式寬螢幕：停靠於右側控制欄下方                              */}
       {/* ───────────────────────────────────────────────────────────── */}
-      {!isFullscreen && (
+      {!immersive && (
         <div
           className={`flex flex-col items-center gap-1.5 transition-all duration-300 ${
             isPortrait
