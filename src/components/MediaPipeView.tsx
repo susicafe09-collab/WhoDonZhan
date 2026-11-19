@@ -1214,7 +1214,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
           {/* 各項互動功能的頂層邊框 (100% 完全實色不透明，無透明度效果)：
               1. 撥開葉子：boarder_top.png, boarder_side_left.png, boarder_side_right.png
-              2. 動物互動：animals_boarder.png
+              2. 動物互動：animals_boarder.webp
               3. 風景手勢：scene_boarder.png */}
           <LeafBorder activeMode={activeMode} />
         </div>

@@ -11,7 +11,7 @@ const BORDER_CONFIG: Record<UnifiedMode, { src: string; alt: string }> = {
     alt: '撥開葉子邊框 (Plant Border)',
   },
   animal: {
-    src: '/animals_boarder.png',
+    src: '/animals_boarder.webp',
     alt: '動物互動邊框 (Animal Border)',
   },
   landscape: {
@@ -25,7 +25,7 @@ const BORDER_CONFIG: Record<UnifiedMode, { src: string; alt: string }> = {
  * - 最上層渲染 (z-52, pointer-events-none)
  * - 依當前互動模式切換專屬邊框素材：
  *   1. 撥開葉子：boarder_top.png, boarder_side_left.png, boarder_side_right.png (100% 完全不透明，微風擺盪動效)
- *   2. 動物互動：animals_boarder.png (100% 完全不透明)
+ *   2. 動物互動：animals_boarder.webp (100% 完全不透明)
  *   3. 風景手勢：scene_boarder.png (100% 完全不透明)
  * - 移除所有刷淡與透明度效果，維持 100% 完整實色 (opacity: 1)
  * - 只渲染當下模式的邊框，其他模式的大圖不載入
@@ -58,7 +58,7 @@ export const LeafBorder: React.FC<LeafBorderProps> = ({ activeMode = 'leaves' })
       {/* 2. 動物互動模式專屬邊框 */}
       {activeMode === 'animal' && (
         <img
-          src="/animals_boarder.png"
+          src="/animals_boarder.webp"
           alt="動物互動邊框 (Animal Border)"
           className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none select-none"
         />
