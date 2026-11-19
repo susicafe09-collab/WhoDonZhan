@@ -142,24 +142,18 @@
 }
 
 /* ───────────────────────────────────────────────────────────── */
-/* 直式互動模式 (.is-portrait) Safe Area 與滿版視口保護規則        */
+/* 上下浮動面板的安全邊距                                        */
 /* ───────────────────────────────────────────────────────────── */
-.is-portrait .portrait-safe-top {
+.portrait-safe-top {
   padding-top: max(0.5rem, var(--safe-top));
   padding-left: max(0.75rem, var(--safe-left));
   padding-right: max(0.75rem, var(--safe-right));
 }
 
-.is-portrait .portrait-safe-bottom {
+.portrait-safe-bottom {
   padding-bottom: max(0.625rem, var(--safe-bottom));
   padding-left: max(0.75rem, var(--safe-left));
   padding-right: max(0.75rem, var(--safe-right));
-}
-
-.is-portrait .portrait-stage-canvas {
-  width: 100vw;
-  height: 100dvh;
-  overflow: hidden;
 }
 
 /* Flat Vector Card Container: borderless, solid vector color */
