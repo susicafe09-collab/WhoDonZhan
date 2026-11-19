@@ -473,20 +473,10 @@ export const InfoView: React.FC = () => {
         >
           {isStandby ? (
             /* ═══════════════════════════════════════════════════════════ */
-            /* 待機畫面：純淨無卡片雜訊，依直式／橫式自動調整比例置中           */
+            /* 待機畫面：只有共用的黑色背景＋一行等待提示                       */
             /* ═══════════════════════════════════════════════════════════ */
             <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden select-none">
-              <img
-                src="/standby.png"
-                alt="展場待機主視覺"
-                className={`${
-                  isPortrait ? 'max-h-[55vh] max-w-[90%]' : 'max-h-[60vh] max-w-full'
-                } object-contain pointer-events-none transition-opacity duration-500`}
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
-              />
-              <div className="mt-4 px-4 py-2 rounded-full bg-[#141414]/80 border border-zinc-800/80 text-zinc-400 text-sm tracking-wider flex items-center gap-2.5 backdrop-blur-sm">
+              <div className="px-4 py-2 rounded-full bg-[#141414]/80 border border-zinc-800/80 text-zinc-400 text-sm tracking-wider flex items-center gap-2.5 backdrop-blur-sm">
                 <span className="w-2 h-2 rounded-full bg-[#28887A] animate-ping" />
                 {boardType === 'animals' && '等待鏡頭前特有種動物互動識別中...'}
                 {boardType === 'landscape' && '等待鏡頭前合歡群峰手勢體驗中...'}
