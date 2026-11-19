@@ -44,6 +44,82 @@ interface MediaPipeViewProps {
   initialMode?: UnifiedMode;
 }
 
+interface TrackingLayerProps {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  activeMode: UnifiedMode;
+  plants: PlantItem[];
+  projection: VideoCoverProjection;
+  showLoading: boolean;
+  onWaveStroke: (plantId: string) => void;
+  onActiveAnimalChange: (target: string | null) => void;
+  onActiveLandscapeChange: (target: string | null) => void;
+}
+
+/**
+ * 鏡頭辨識層：MediaPipe 每一格畫面都會更新 poses/faces。
+ * 把它們關在這個小元件裡，每格只重畫這裡，外面的大畫面和面板不跟著重畫。
+ */
+const TrackingLayer = React.memo(function TrackingLayer({
+  videoRef,
+  activeMode,
+  plants,
+  projection,
+  showLoading,
+  onWaveStroke,
+  onActiveAnimalChange,
+  onActiveLandscapeChange,
+}: TrackingLayerProps) {
+  const { faces, poses, isLoaded } = useMediaPipe(videoRef, activeMode === 'animal');
+
+  // 撥葉子手勢偵測 (傳入最新直式／橫式畫布投影，確保手勢座標零偏移)
+  useLeafHandTracking({
+    poses,
+    faces,
+    plants,
+    enabled: activeMode === 'leaves',
+    requiredWaveCount: 1,
+    projection,
+    onWaveStroke,
+  });
+
+  return (
+    <>
+      {!isLoaded && showLoading && (
+        <div className="absolute inset-0 flex items-center justify-center z-40 bg-black/85">
+          <div className="flex flex-col items-center dark-glow-card px-6 py-5 rounded-3xl">
+            <div className="relative z-10 flex flex-col items-center">
+              <div className="w-8 h-8 border-3 border-t-[#28887A] border-r-[#28887A] border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+              <p className="mt-3 text-white font-semibold text-xs tracking-wider">
+                載入 MediaPipe 姿態識別中...
+              </p>
+              <p className="text-[11px] text-[#4CA6A8] mt-0.5">本地端模組秒速載入中</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Mode: 動物互動模式 (傳入 videoProjection 確保直式／橫式頭飾座標精準貼合) */}
+      {activeMode === 'animal' && (
+        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
+          <AnimalMode
+            faces={faces}
+            poses={poses}
+            projection={projection}
+            onActiveAnimalChange={onActiveAnimalChange}
+          />
+        </div>
+      )}
+
+      {/* 3. Mode: 風景手勢模式 (z-50 頂層獨立透明度渲染，含距離提示與第二螢幕同步) */}
+      {activeMode === 'landscape' && (
+        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
+          <LandscapeMode poses={poses} onActiveLandscapeChange={onActiveLandscapeChange} />
+        </div>
+      )}
+    </>
+  );
+});
+
 export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   initialMode = 'leaves',
 }) => {
@@ -116,9 +192,6 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   const [autoReturnSeconds, setAutoReturnSeconds] = useState<number>(10); // 預設 10 秒自動復原
   const [showSettings, setShowSettings] = useState(false);
   const [showPlantInfoModal, setShowPlantInfoModal] = useState(false);
-
-  // MediaPipe AI Vision (本地端 WASM + Models，平行秒開)
-  const { faces, poses, isLoaded } = useMediaPipe(videoRef);
 
   // 穩定的回調函式，避免子元件每幀重渲染
   const handleActiveAnimalChange = useCallback((target: string | null) => {
@@ -541,17 +614,6 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     },
     [autoReturnSeconds, soundEnabled]
   );
-
-  // Hook for hand-only tracking (傳入最新直式／橫式畫布投影，確保手勢座標零偏移)
-  useLeafHandTracking({
-    poses,
-    faces,
-    plants: visiblePlants,
-    enabled: activeMode === 'leaves',
-    requiredWaveCount: 1,
-    projection: videoProjection,
-    onWaveStroke: handleWaveStroke,
-  });
 
   // Push / Part a plant directly (click/touch fallback)
   const handlePushPlant = useCallback(
@@ -1111,21 +1173,6 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             <div className="absolute inset-0 w-full h-full pointer-events-none bg-[#0A0A0A] overflow-hidden" />
           )}
 
-          {/* AI Model Loading Overlay */}
-          {!isLoaded && hasCamera && !cameraError && (
-            <div className="absolute inset-0 flex items-center justify-center z-40 bg-black/85">
-              <div className="flex flex-col items-center dark-glow-card px-6 py-5 rounded-3xl">
-                <div className="relative z-10 flex flex-col items-center">
-                  <div className="w-8 h-8 border-3 border-t-[#28887A] border-r-[#28887A] border-b-transparent border-l-transparent rounded-full animate-spin"></div>
-                  <p className="mt-3 text-white font-semibold text-xs tracking-wider">
-                    載入 MediaPipe 姿態識別中...
-                  </p>
-                  <p className="text-[11px] text-[#4CA6A8] mt-0.5">本地端模組秒速載入中</p>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Shared Live Video Element (Mirrored, object-fit: cover object-center 居中滿版不變形) */}
           <video
             ref={videoRef}
@@ -1153,27 +1200,17 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             </div>
           )}
 
-          {/* 2. Mode: 動物互動模式 (傳入 videoProjection 確保直式／橫式頭飾座標精準貼合) */}
-          {activeMode === 'animal' && (
-            <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
-              <AnimalMode
-                faces={faces}
-                poses={poses}
-                projection={videoProjection}
-                onActiveAnimalChange={handleActiveAnimalChange}
-              />
-            </div>
-          )}
-
-          {/* 3. Mode: 風景手勢模式 (z-50 頂層獨立透明度渲染，含距離提示與第二螢幕同步) */}
-          {activeMode === 'landscape' && (
-            <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
-              <LandscapeMode
-                poses={poses}
-                onActiveLandscapeChange={handleActiveLandscapeChange}
-              />
-            </div>
-          )}
+          {/* 鏡頭辨識層：每一格畫面的更新只重畫這一層，不會整頁重畫 */}
+          <TrackingLayer
+            videoRef={videoRef}
+            activeMode={activeMode}
+            plants={visiblePlants}
+            projection={videoProjection}
+            showLoading={hasCamera && !cameraError}
+            onWaveStroke={handleWaveStroke}
+            onActiveAnimalChange={handleActiveAnimalChange}
+            onActiveLandscapeChange={handleActiveLandscapeChange}
+          />
 
           {/* 各項互動功能的頂層邊框 (100% 完全實色不透明，無透明度效果)：
               1. 撥開葉子：boarder_top.png, boarder_side_left.png, boarder_side_right.png

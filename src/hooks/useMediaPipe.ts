@@ -26,144 +26,152 @@ console.log = suppressMediaPipeLogs(originalConsoleLog);
 console.warn = suppressMediaPipeLogs(originalConsoleWarn);
 console.error = suppressMediaPipeLogs(originalConsoleError);
 
-export const useMediaPipe = (videoRef: React.RefObject<HTMLVideoElement | null>) => {
+const loadVision = () =>
+  FilesetResolver.forVisionTasks('/wasm').catch((e) => {
+    console.warn('Local WASM loading failed, falling back to CDN:', e);
+    return FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+    );
+  });
+
+const FACE_OPTIONS = {
+  outputFaceBlendshapes: false,
+  runningMode: 'VIDEO' as const,
+  numFaces: 3,
+  minFaceDetectionConfidence: 0.4,
+  minFacePresenceConfidence: 0.4,
+  minTrackingConfidence: 0.4,
+};
+
+const POSE_OPTIONS = {
+  runningMode: 'VIDEO' as const,
+  numPoses: 3,
+  minPoseDetectionConfidence: 0.4,
+  minPosePresenceConfidence: 0.4,
+  minTrackingConfidence: 0.4,
+};
+
+/**
+ * needFaces：只有「動物互動」要認臉。其他模式不載入、也不跑臉部模型，
+ * 每一格畫面只跑姿勢模型，省下一半運算。
+ */
+export const useMediaPipe = (
+  videoRef: React.RefObject<HTMLVideoElement | null>,
+  needFaces: boolean
+) => {
   const [isLoaded, setIsLoaded] = useState(false);
+  const visionRef = useRef<any>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const lastVideoTimeRef = useRef(-1);
-  
+  const needFacesRef = useRef(needFaces);
+  needFacesRef.current = needFaces;
+
   const [faces, setFaces] = useState<any[]>([]);
   const [poses, setPoses] = useState<any[]>([]);
 
+  // 姿勢模型：三種模式都要，一開始就載入
   useEffect(() => {
     let isActive = true;
 
-    const initMediaPipe = async () => {
+    (async () => {
       try {
-        // 1. 本地端 WASM 目錄 (/wasm)，離線或行動裝置可秒開；同時具備 CDN 自動降級備援
-        let vision: any = null;
-        try {
-          vision = await FilesetResolver.forVisionTasks('/wasm');
-        } catch (e) {
-          console.warn('Local WASM loading failed, falling back to CDN:', e);
-          vision = await FilesetResolver.forVisionTasks(
-            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-          );
-        }
-
+        const vision = await loadVision();
         if (!isActive) return;
+        visionRef.current = vision;
 
-        // 2. 利用 Promise.all 同時平行載入 FaceLandmarker 與 PoseLandmarker，大幅壓縮載入等待時間
-        const [faceLm, poseLm] = await Promise.all([
-          FaceLandmarker.createFromOptions(vision, {
+        const poseLm = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: '/models/pose_landmarker_lite.task', delegate: 'GPU' },
+          ...POSE_OPTIONS,
+        }).catch((err) => {
+          console.warn('Local pose model failed, fallback to online model:', err);
+          return PoseLandmarker.createFromOptions(vision, {
             baseOptions: {
-              modelAssetPath: '/models/face_landmarker.task',
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
               delegate: 'GPU',
             },
-            outputFaceBlendshapes: false,
-            runningMode: 'VIDEO',
-            numFaces: 3,
-            minFaceDetectionConfidence: 0.4,
-            minFacePresenceConfidence: 0.4,
-            minTrackingConfidence: 0.4,
-          }).catch((err) => {
-            console.warn('Local face model failed, fallback to online model:', err);
-            return FaceLandmarker.createFromOptions(vision, {
-              baseOptions: {
-                modelAssetPath:
-                  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-                delegate: 'GPU',
-              },
-              outputFaceBlendshapes: false,
-              runningMode: 'VIDEO',
-              numFaces: 3,
-              minFaceDetectionConfidence: 0.4,
-              minFacePresenceConfidence: 0.4,
-              minTrackingConfidence: 0.4,
-            });
-          }),
-
-          PoseLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: '/models/pose_landmarker_lite.task',
-              delegate: 'GPU',
-            },
-            runningMode: 'VIDEO',
-            numPoses: 3,
-            minPoseDetectionConfidence: 0.4,
-            minPosePresenceConfidence: 0.4,
-            minTrackingConfidence: 0.4,
-          }).catch((err) => {
-            console.warn('Local pose model failed, fallback to online model:', err);
-            return PoseLandmarker.createFromOptions(vision, {
-              baseOptions: {
-                modelAssetPath:
-                  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-                delegate: 'GPU',
-              },
-              runningMode: 'VIDEO',
-              numPoses: 3,
-              minPoseDetectionConfidence: 0.4,
-              minPosePresenceConfidence: 0.4,
-              minTrackingConfidence: 0.4,
-            });
-          }),
-        ]);
+            ...POSE_OPTIONS,
+          });
+        });
 
         if (!isActive) {
-          faceLm?.close();
-          poseLm?.close();
+          poseLm.close();
           return;
         }
-
-        faceLandmarkerRef.current = faceLm;
         poseLandmarkerRef.current = poseLm;
-
-        if (isActive) {
-          setIsLoaded(true);
-        }
+        setIsLoaded(true);
       } catch (err) {
         console.error('Failed to initialize MediaPipe:', err);
       }
-    };
-
-    initMediaPipe();
+    })();
 
     return () => {
       isActive = false;
-      if (faceLandmarkerRef.current) faceLandmarkerRef.current.close();
-      if (poseLandmarkerRef.current) poseLandmarkerRef.current.close();
+      poseLandmarkerRef.current?.close();
+      poseLandmarkerRef.current = null;
+      faceLandmarkerRef.current?.close();
+      faceLandmarkerRef.current = null;
     };
   }, []);
+
+  // 臉部模型：第一次切到動物模式才載入，之後留著
+  useEffect(() => {
+    if (!needFaces || !isLoaded || faceLandmarkerRef.current) return;
+    let isActive = true;
+    const vision = visionRef.current;
+
+    FaceLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: '/models/face_landmarker.task', delegate: 'GPU' },
+      ...FACE_OPTIONS,
+    })
+      .catch((err) => {
+        console.warn('Local face model failed, fallback to online model:', err);
+        return FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'GPU',
+          },
+          ...FACE_OPTIONS,
+        });
+      })
+      .then((faceLm) => {
+        if (isActive && !faceLandmarkerRef.current) faceLandmarkerRef.current = faceLm;
+        else faceLm.close();
+      })
+      .catch((err) => console.error('Failed to load face model:', err));
+
+    return () => {
+      isActive = false;
+    };
+  }, [needFaces, isLoaded]);
+
+  useEffect(() => {
+    if (!needFaces) setFaces((prev) => (prev.length === 0 ? prev : []));
+  }, [needFaces]);
 
   useEffect(() => {
     let animationFrameId: number;
 
     const detect = () => {
-      if (
-        videoRef.current &&
-        videoRef.current.readyState >= 2 &&
-        isLoaded &&
-        faceLandmarkerRef.current &&
-        poseLandmarkerRef.current
-      ) {
-        const video = videoRef.current;
-        let startTimeMs = performance.now();
-        if (lastVideoTimeRef.current !== video.currentTime) {
-          lastVideoTimeRef.current = video.currentTime;
+      const video = videoRef.current;
+      const poseLm = poseLandmarkerRef.current;
+      if (video && video.readyState >= 2 && poseLm && lastVideoTimeRef.current !== video.currentTime) {
+        lastVideoTimeRef.current = video.currentTime;
+        const startTimeMs = performance.now();
 
-          try {
-            const faceResult = faceLandmarkerRef.current.detectForVideo(video, startTimeMs);
-            const poseResult = poseLandmarkerRef.current.detectForVideo(video, startTimeMs);
+        try {
+          const nextPoses = poseLm.detectForVideo(video, startTimeMs).landmarks || [];
+          setPoses((prev) => (prev.length === 0 && nextPoses.length === 0 ? prev : nextPoses));
 
-            const nextFaces = faceResult.faceLandmarks || [];
-            const nextPoses = poseResult.landmarks || [];
-
+          const faceLm = needFacesRef.current ? faceLandmarkerRef.current : null;
+          if (faceLm) {
+            const nextFaces = faceLm.detectForVideo(video, startTimeMs).faceLandmarks || [];
             setFaces((prev) => (prev.length === 0 && nextFaces.length === 0 ? prev : nextFaces));
-            setPoses((prev) => (prev.length === 0 && nextPoses.length === 0 ? prev : nextPoses));
-          } catch (e) {
-            console.error('Detection error:', e);
           }
+        } catch (e) {
+          console.error('Detection error:', e);
         }
       }
       animationFrameId = requestAnimationFrame(detect);
