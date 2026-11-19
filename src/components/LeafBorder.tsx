@@ -5,21 +5,6 @@ interface LeafBorderProps {
   activeMode?: UnifiedMode;
 }
 
-const BORDER_CONFIG: Record<UnifiedMode, { src: string; alt: string }> = {
-  leaves: {
-    src: '/plant_boarder.png',
-    alt: '撥開葉子邊框 (Plant Border)',
-  },
-  animal: {
-    src: '/animals_boarder.webp',
-    alt: '動物互動邊框 (Animal Border)',
-  },
-  landscape: {
-    src: '/scene_boarder.png',
-    alt: '風景手勢邊框 (Scene Border)',
-  },
-};
-
 /**
  * 互動功能邊框疊加層元件：
  * - 最上層渲染 (z-52, pointer-events-none)
