@@ -1,0 +1,239 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Dancing+Script:wght@600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+
+.font-handwriting {
+  font-family: 'Caveat', 'Dancing Script', cursive;
+}
+
+.font-playfair {
+  font-family: 'Playfair Display', Georgia, Cambria, 'Times New Roman', serif;
+}
+
+/* 頂部邊框輕柔微風搖晃動畫 */
+@keyframes breeze-sway-top {
+  0%, 100% {
+    transform: rotate(0deg) scale(1.02);
+  }
+  35% {
+    transform: rotate(0.8deg) scale(1.03);
+  }
+  70% {
+    transform: rotate(-0.7deg) scale(1.015);
+  }
+}
+
+/* 左側邊框微風吹拂搖曳動畫（包含 scale(1.18) 防穿幫基底） */
+@keyframes breeze-sway-left {
+  0%, 100% {
+    transform: translateX(-4%) scale(1.18) rotate(0deg);
+  }
+  30% {
+    transform: translateX(-4%) scale(1.19) rotate(-2deg);
+  }
+  65% {
+    transform: translateX(-4%) scale(1.17) rotate(1.6deg);
+  }
+  85% {
+    transform: translateX(-4%) scale(1.18) rotate(-0.7deg);
+  }
+}
+
+/* 右側邊框微風吹拂搖曳動畫（包含 scale(1.18) 防穿幫基底，並錯開週期） */
+@keyframes breeze-sway-right {
+  0%, 100% {
+    transform: translateX(4%) scale(1.18) rotate(0deg);
+  }
+  25% {
+    transform: translateX(4%) scale(1.19) rotate(1.8deg);
+  }
+  60% {
+    transform: translateX(4%) scale(1.17) rotate(-1.7deg);
+  }
+  80% {
+    transform: translateX(4%) scale(1.18) rotate(0.9deg);
+  }
+}
+
+.animate-breeze-top {
+  transform-origin: top center;
+  animation: breeze-sway-top 6.5s ease-in-out infinite;
+}
+
+.animate-breeze-left {
+  transform-origin: left center;
+  animation: breeze-sway-left 5.4s ease-in-out infinite;
+}
+
+.animate-breeze-right {
+  transform-origin: right center;
+  animation: breeze-sway-right 6s ease-in-out infinite 0.7s;
+}
+
+/* 植物微風擺盪與揮手反饋動畫 */
+@keyframes plant-sway-subtle {
+  0%, 100% {
+    transform: rotate(0deg) translateY(0px);
+  }
+  35% {
+    transform: rotate(1.2deg) translateY(-2px);
+  }
+  70% {
+    transform: rotate(-1deg) translateY(1.5px);
+  }
+}
+
+@keyframes plant-sway-bottom-subtle {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(0.8deg) scale(1.008);
+  }
+}
+
+@keyframes wave-twitch {
+  0%, 100% {
+    transform: rotate(0deg) translateX(0px);
+  }
+  25% {
+    transform: rotate(-3deg) translateX(-4px);
+  }
+  75% {
+    transform: rotate(3deg) translateX(4px);
+  }
+}
+
+.animate-plant-sway {
+  animation: plant-sway-subtle 5.2s ease-in-out infinite;
+}
+
+.animate-plant-sway-bottom {
+  animation: plant-sway-bottom-subtle 4.8s ease-in-out infinite;
+}
+
+.animate-wave-twitch {
+  animation: wave-twitch 0.4s ease-in-out infinite;
+}
+
+/* ───────────────────────────────────────────────────────────── */
+/* Flat Vector Card & Buttons (No Gradients, No Glows)            */
+/* Background: solid black (#0A0A0A)                             */
+/* Active: flat solid Teal (#28887A)                             */
+/* Inactive: flat solid dark gray (#1A1A1A)                      */
+/* Accents: Deep Pine (#0E5A4E), Cyan-Blue (#4CA6A8), Mustard   */
+/* ───────────────────────────────────────────────────────────── */
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+:root, html, body, #root {
+  width: 100vw;
+  height: 100dvh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background-color: #0A0A0A !important;
+  color: #F4F4F5;
+}
+
+/* ───────────────────────────────────────────────────────────── */
+/* 直式互動模式 (.is-portrait) Safe Area 與滿版視口保護規則        */
+/* ───────────────────────────────────────────────────────────── */
+.is-portrait .portrait-safe-top {
+  padding-top: max(0.5rem, var(--safe-top));
+  padding-left: max(0.75rem, var(--safe-left));
+  padding-right: max(0.75rem, var(--safe-right));
+}
+
+.is-portrait .portrait-safe-bottom {
+  padding-bottom: max(0.625rem, var(--safe-bottom));
+  padding-left: max(0.75rem, var(--safe-left));
+  padding-right: max(0.75rem, var(--safe-right));
+}
+
+.is-portrait .portrait-stage-canvas {
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Flat Vector Card Container: borderless, solid vector color */
+.dark-glow-card {
+  position: relative;
+  background-color: #141414 !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.dark-glow-card::after {
+  display: none !important;
+}
+
+/* Active Button: flat solid #28887A (no border, no glow) */
+.btn-dark-glow-active {
+  background-color: #28887A !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #FFFFFF !important;
+}
+
+.btn-dark-glow-active:hover {
+  background-color: #206E63 !important;
+  box-shadow: none !important;
+}
+
+/* Inactive Button: flat solid #1A1A1A (no border, no glow) */
+.btn-dark-glow-inactive {
+  background-color: #1A1A1A !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #9CA3AF !important;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-dark-glow-inactive:hover {
+  background-color: #262626 !important;
+  color: #FFFFFF !important;
+  box-shadow: none !important;
+}
+
+/* Capsule Button: flat solid */
+.btn-dark-glow-capsule {
+  background-color: #1A1A1A !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #D1D5DB !important;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-dark-glow-capsule:hover {
+  background-color: #28887A !important;
+  color: #FFFFFF !important;
+  box-shadow: none !important;
+}
+
+/* 看板多頁自動淡入進度條動畫 */
+@keyframes progress-fill-line {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.animate-progress-fill {
+  animation: progress-fill-line linear forwards;
+}

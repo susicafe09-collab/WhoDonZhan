@@ -1,0 +1,7 @@
+{
+  "name": "AR 植物邊框互動",
+  "description": "提供「撥開葉子」純手部動態互動、MediaPipe 動物識別互動，以及風景手勢識別的三合一整合相機體驗。",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
