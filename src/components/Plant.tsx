@@ -55,6 +55,8 @@ interface PlantProps {
   invertMirror?: boolean;
   totalDuration: number;
   requiredWaves?: number;
+  /** 倒數小圓圈只在設定模式（右鍵叫出）顯示，展示時觀眾看不到 */
+  showCountdown?: boolean;
   onPush: (id: string) => void;
   onReset: (id: string) => void;
 }
@@ -65,6 +67,7 @@ export const Plant: React.FC<PlantProps> = ({
   invertMirror = false,
   totalDuration,
   requiredWaves = 1,
+  showCountdown = false,
   onPush,
   onReset,
 }) => {
@@ -207,7 +210,7 @@ export const Plant: React.FC<PlantProps> = ({
 
         {/* Countdown Ring Badge (visible when pushed aside) */}
         <AnimatePresence>
-          {plant.isPushed && (
+          {showCountdown && plant.isPushed && (
             <motion.div
               initial={{ opacity: 0, scale: 0.6 }}
               animate={{ opacity: 1, scale: 1 }}

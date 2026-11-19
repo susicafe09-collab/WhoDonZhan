@@ -1122,6 +1122,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                   invertMirror={false}
                   totalDuration={autoReturnSeconds}
                   requiredWaves={1}
+                  showCountdown={showControls}
                   onPush={handlePushPlant}
                   onReset={handleResetPlant}
                 />
