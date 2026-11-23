@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export type ScreenOrientationType = 'portrait' | 'landscape';
 
@@ -87,6 +87,7 @@ export function useScreenRatio(): ScreenRatioInfo {
     syncRootOrientationClass(initial.isPortrait);
     return initial;
   });
+  const lastMetricsRef = useRef<ScreenRatioInfo>(metrics);
 
   useEffect(() => {
     let rafId: number | null = null;
@@ -95,18 +96,18 @@ export function useScreenRatio(): ScreenRatioInfo {
     const applyUpdate = () => {
       const next = getScreenMetrics();
       syncRootOrientationClass(next.isPortrait);
-      setMetrics((prev) => {
-        if (
-          prev.width === next.width &&
-          prev.height === next.height &&
-          prev.orientation === next.orientation &&
-          prev.isTallPortrait === next.isTallPortrait &&
-          prev.isWideLandscape === next.isWideLandscape
-        ) {
-          return prev;
-        }
-        return next;
-      });
+      const prev = lastMetricsRef.current;
+      if (
+        prev.width === next.width &&
+        prev.height === next.height &&
+        prev.orientation === next.orientation &&
+        prev.isTallPortrait === next.isTallPortrait &&
+        prev.isWideLandscape === next.isWideLandscape
+      ) {
+        return;
+      }
+      lastMetricsRef.current = next;
+      setMetrics(next);
     };
 
     const scheduleUpdate = () => {

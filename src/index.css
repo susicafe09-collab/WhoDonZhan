@@ -142,8 +142,14 @@
 }
 
 /* ───────────────────────────────────────────────────────────── */
-/* 上下浮動面板的安全邊距                                        */
+/* 自動直式模式 (.is-portrait) 滿版鎖定與上下安全邊距              */
 /* ───────────────────────────────────────────────────────────── */
+.is-portrait .portrait-stage-canvas {
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 .portrait-safe-top {
   padding-top: max(0.5rem, var(--safe-top));
   padding-left: max(0.75rem, var(--safe-left));

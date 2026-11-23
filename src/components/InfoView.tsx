@@ -4,8 +4,8 @@ import { syncSocket, SyncStatePayload } from '../utils/syncSocket';
 import {
   KNOWLEDGE_DICTIONARY,
   KnowledgeItem,
-  MUZHA_PLANTS_DATA,
   CONCISE_PLANT_DESCRIPTIONS,
+  ALL_MUZHA_PLANTS_LIST,
 } from '../data/knowledgeData';
 import { MuzhaPlantInfo } from '../types';
 import {
@@ -17,99 +17,8 @@ import { animalAudio } from '../utils/animalAudio';
 import { useScreenRatio } from '../hooks/useScreenRatio';
 import { useRightClickControls } from '../hooks/useRightClickControls';
 
-// 全套木柵貓空 7 款植物完整資料庫（依茶山垂直生態鏈排序）
-const ALL_DEFAULT_MUZHA_PLANTS: MuzhaPlantInfo[] = [
-  {
-    id: 'plant-1',
-    name: '木柵特產・破土綠竹筍',
-    scientificName: 'Bambusa oldhamii (Shoots)',
-    categoryLabel: '地板植被・木柵名產',
-    imageSrc: '/leaves_ground_4.png',
-    muzhaSpot: '老泉里・指南茶山坡地',
-    tags: ['🎋 木柵三寶', '💧 坡地固水', '🌱 雨後破土'],
-    muzhaRelation:
-      '木柵老泉里向陽背風、土壤鬆軟富含腐植質，造就綠竹筍清甜如梨。初夏採筍與焙製鐵觀音交相輝映，是貓空茶山農耕共生的名產瑰寶。',
-    description:
-      '多年生常綠竹類地下嫩芽，雨後強力破土。基部根系具強大抓土固水功能，守護坡地表土。',
-    funFact:
-      '茶農須在清晨破曉前摸黑掘筍，筍尖一旦探出照光出青便會轉苦，採筍全憑指尖摸尋！',
-  },
-  {
-    id: 'plant-2',
-    name: '樟樹步道・樟楠樹冠',
-    scientificName: 'Cinnamomum camphora',
-    categoryLabel: '側邊植物・樹冠林蔭',
-    imageSrc: '/leaves.png',
-    muzhaSpot: '樟樹步道・百年老樟樹群',
-    tags: ['☀️ 柔和漫射', '🍃 天然芬多精', '🌿 驅蟲清芬'],
-    muzhaRelation:
-      '貓空「樟湖」地名之由來。枝繁葉茂的巨大樹冠宛如天然綠傘，為林下怕強光的鐵觀音茶樹遮擋烈日，提供溫和漫射光與天然驅蟲香氣。',
-    description:
-      '樟科常綠喬木，葉具明顯三出脈。搓揉新鮮葉片即散發清芬提神的天然芳樟醇，清淨山林空氣。',
-    funFact:
-      '清晨微風吹拂樟楠樹冠釋放豐富樟醇與芬多精，昔日茶農深信能驅瘴醒腦，是步道天然防護罩。',
-  },
-  {
-    id: 'plant-3',
-    name: '百年老樹・垂懸崖薑蕨',
-    scientificName: 'Aglaomorpha coronans',
-    categoryLabel: '側邊植物・空中皇冠',
-    imageSrc: '/leaves_ground_6.png',
-    muzhaSpot: '指南宮後山・巨木相思林',
-    tags: ['👑 空中客棧', '🌧️ 聚寶盛雨', '🌿 雲霧著生'],
-    muzhaRelation:
-      '附生於指南山老樹樹幹上的大型著生蕨，宛如翡翠皇冠高懸林間。基部腐植葉如聚寶盆盛接雨水與落葉，在半空中形成提供小生物棲息的微型生態圈。',
-    description:
-      '水龍骨科大型附生蕨，根莖粗厚肉質橫生。基部如鳥巢般盛接落葉，上部羽狀葉優雅垂墜。',
-    funFact:
-      '崖薑蕨是山林中的「空中客棧」，底部堆積的腐植土層常吸引樹蛙、攀蜥在半空中築巢安家！',
-  },
-  {
-    id: 'plant-4',
-    name: '銀河洞溪谷・闊葉水龍骨',
-    scientificName: 'Polypodiodes amoena',
-    categoryLabel: '地板植被・潮濕溪谷',
-    imageSrc: '/leaves_ground_1.png',
-    muzhaSpot: '銀河洞瀑布・指南溪上游岩壁',
-    tags: ['💧 濕度指標', '🏞️ 懸崖著生', '🌿 翠綠革質'],
-    muzhaRelation:
-      '常年繁生於銀河洞瀑布水氣瀰漫的峭壁與石壁。貓空年降雨充沛且濕度高達 85%，青翠的水龍骨群正是茶山純淨泉水與天然濕度的環境指標。',
-    description:
-      '水龍骨科常綠著生蕨類，肉質根莖被覆金褐鱗片。羽狀深裂葉片青翠革質，葉背具金黃孢子囊群。',
-    funFact:
-      '肉質根狀莖覆滿鱗片宛如青龍盤旋石壁因而得名，組織蓄水力極佳，能抵擋山區短暫乾旱。',
-  },
-  {
-    id: 'plant-5',
-    name: '貓空野徑・垂懸藤葉',
-    scientificName: 'Ampelocissus cantoniensis',
-    categoryLabel: '側邊植物・林緣攀緣',
-    imageSrc: '/leaves_ground_5.png',
-    muzhaSpot: '壺穴步道・溪畔次生林緣',
-    tags: ['🍇 獼猴珍饈', '🌿 垂掛綠簾', '💧 朝露滋養'],
-    muzhaRelation:
-      '攀附於壺穴步道岩壁與茶園石籬間，垂懸形成如綠色水簾的林緣景致。深秋結出的深紫漿果，是貓空山林台灣獼猴與藍腹鷴最愛的野性珍饈。',
-    description:
-      '木質落葉攀援藤本，以枝梢卷鬚攀附向上蔓生。葉片心狀卵形，垂掛步道兩側極具野趣。',
-    funFact:
-      '木質藤莖導水能力極強，昔日老獵人與巡山人在深山缺水時，斜切新鮮藤莖便能汲取天然甘泉！',
-  },
-  {
-    id: 'plant-6',
-    name: '貓空步道・高山箭竹',
-    scientificName: 'Yushania niitakayamensis',
-    categoryLabel: '地板植被・水土護坡',
-    imageSrc: '/leaves_ground_3.png',
-    muzhaSpot: '樟湖步道・待老坑山稜線',
-    tags: ['🛡️ 護坡防線', '🌫️ 凝結晨霧', '🌿 百年古道'],
-    muzhaRelation:
-      '生長於待老坑山脊梁，緻密竹根如立體鋼筋網牢抓邊坡。季風吹拂時為茶園聚攏水氣凝結山嵐，是守護挑茶古道百年不塌的護坡功臣。',
-    description:
-      '禾本科多年生走莖植物，竹稈極富韌性。緻密根系交織於地表下，是水土保持的關鍵防線。',
-    funFact:
-      '地下竹鞭蔓延極深且韌性驚人，昔日挑茶人行走陡坡，全靠箭竹根緊繫砂石維繫安全步道。',
-  },
-];
+// 由 src/data/bioData.ts 集中管理的木柵貓空植物完整清單
+const ALL_DEFAULT_MUZHA_PLANTS: MuzhaPlantInfo[] = ALL_MUZHA_PLANTS_LIST;
 
 export const InfoView: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -439,7 +348,7 @@ export const InfoView: React.FC = () => {
         {/* 右側：全螢幕切換按鈕 */}
         <button
           onClick={toggleFullscreen}
-          className="p-2 rounded-xl bg-[#1A1A1A]/80 hover:bg-[#262626] text-zinc-400 hover:text-[#4CA6A8] transition-colors cursor-pointer border-none shadow-none backdrop-blur-sm"
+          className="p-2 rounded-xl bg-[rgba(26,26,26,0.92)] hover:bg-[#262626] text-zinc-400 hover:text-[#4CA6A8] transition-colors cursor-pointer border-none shadow-none"
           title={isFullscreen ? '退出全螢幕' : '全螢幕展示'}
         >
           {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -476,7 +385,7 @@ export const InfoView: React.FC = () => {
             /* 待機畫面：只有共用的黑色背景＋一行等待提示                       */
             /* ═══════════════════════════════════════════════════════════ */
             <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden select-none">
-              <div className="px-4 py-2 rounded-full bg-[#141414]/80 border border-zinc-800/80 text-zinc-400 text-sm tracking-wider flex items-center gap-2.5 backdrop-blur-sm">
+              <div className="px-4 py-2 rounded-full bg-[rgba(20,20,20,0.92)] border border-zinc-800/80 text-zinc-400 text-sm tracking-wider flex items-center gap-2.5">
                 <span className="w-2 h-2 rounded-full bg-[#28887A] animate-ping" />
                 {boardType === 'animals' && '等待鏡頭前特有種動物互動識別中...'}
                 {boardType === 'landscape' && '等待鏡頭前合歡群峰手勢體驗中...'}

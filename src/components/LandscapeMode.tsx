@@ -55,8 +55,8 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════ */}
-      {/* 3 張絕對固定於畫面的滿版疊加層（0.7s 平滑淡入淡出，保證單一顯示）     */}
-      {/* 使用 object-contain object-center 確保上下兩端圖案 100% 完整無裁切 */}
+      {/* 3 張山脈疊加層（0.7s 平滑淡入淡出，單一顯示）                         */}
+      {/* 縮小至約 78% 並錨定於畫面中下半部 (bottom: 15%)，保留上方人像與手勢空間 */}
       {/* ══════════════════════════════════════════════════════════════════ */}
 
       {/* 風景圖 1 (對應 Pose 1: 雙手頭頂大圓弧/三角形) */}
@@ -70,7 +70,13 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
         <img
           src="/Mountain_type_1.png"
           alt="Mountain Landscape 1"
-          className="absolute inset-0 w-full h-full object-contain object-center pointer-events-none"
+          className="absolute left-1/2 -translate-x-1/2 object-contain object-bottom pointer-events-none"
+          style={{
+            bottom: '15%',
+            width: '78%',
+            maxWidth: '78vw',
+            maxHeight: '55%',
+          }}
         />
       </div>
 
@@ -85,11 +91,17 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
         <img
           src="/Mountain_type_2.png"
           alt="Mountain Landscape 2"
-          className="absolute inset-0 w-full h-full object-contain object-center pointer-events-none"
+          className="absolute left-1/2 -translate-x-1/2 object-contain object-bottom pointer-events-none"
+          style={{
+            bottom: '15%',
+            width: '78%',
+            maxWidth: '78vw',
+            maxHeight: '55%',
+          }}
         />
       </div>
 
-      {/* 風景圖 3 (對應 Pose 3: 右手高舉，左手放胸前) */}
+      {/* 風景圖 3 (對應 Pose 3: 單手高舉指天，另一手放胸前) */}
       <div
         className="absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-700 ease-in-out z-50"
         style={{
@@ -100,7 +112,13 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
         <img
           src="/Mountain_type_3.png"
           alt="Mountain Landscape 3"
-          className="absolute inset-0 w-full h-full object-contain object-center pointer-events-none"
+          className="absolute left-1/2 -translate-x-1/2 object-contain object-bottom pointer-events-none"
+          style={{
+            bottom: '15%',
+            width: '78%',
+            maxWidth: '78vw',
+            maxHeight: '55%',
+          }}
         />
       </div>
 
@@ -128,64 +146,58 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
       )}
 
       {/* ══════════════════════════════════════════════════════════════════ */}
-      {/* 透明對位參考圖 UI（純圖片圖示，完全去文字化）                     */}
+      {/* 高對比放大版風景手勢引導圖示（放大 1.7x+，純上半身動作一眼可辨）       */}
       {/* ══════════════════════════════════════════════════════════════════ */}
       <div
-        className={`absolute inset-0 z-40 flex items-center justify-center p-4 pointer-events-none transition-all duration-500 ease-in-out ${
-          hasAnyPoseActive ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-80 scale-100'
+        className={`absolute inset-0 z-40 flex items-center justify-center p-4 sm:p-6 pointer-events-none transition-all duration-500 ease-in-out ${
+          hasAnyPoseActive ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-95 scale-100'
         }`}
       >
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-4 max-w-[min(86vw,360px)] w-full">
-          {/* Pose 1 圖示卡片 */}
-          <div className="flex items-center justify-center p-2 rounded-2xl bg-[#141414] border-none shadow-none">
+        <div className="grid grid-cols-3 gap-3 sm:gap-5 max-w-[min(94vw,640px)] w-full">
+          {/* Pose 1 圖示卡片：雙手高舉過頭圓弧 */}
+          <div className="flex items-center justify-center p-3.5 sm:p-5 rounded-3xl bg-[rgba(10,16,15,0.88)] border-2 border-[#4CA6A8]/85 shadow-[0_8px_24px_rgba(0,0,0,0.65)]">
             <svg
-              viewBox="0 0 100 120"
-              className="w-12 h-16 sm:w-14 sm:h-20 stroke-white/90 fill-none"
-              strokeWidth="4"
+              viewBox="0 0 100 100"
+              className="w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 fill-none"
+              strokeWidth="6"
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <circle cx="50" cy="40" r="10" strokeWidth="3.5" />
-              <line x1="50" y1="50" x2="50" y2="85" />
-              <path d="M 50 58 Q 20 40 38 18 Q 50 12 50 15" />
-              <path d="M 50 58 Q 80 40 62 18 Q 50 12 50 15" />
-              <line x1="50" y1="85" x2="35" y2="115" />
-              <line x1="50" y1="85" x2="65" y2="115" />
+              <circle cx="50" cy="40" r="11" className="stroke-white" strokeWidth="5.5" />
+              <line x1="50" y1="52" x2="50" y2="88" className="stroke-white" />
+              <path d="M 50 58 Q 16 40 36 14 Q 50 6 50 10" className="stroke-[#7BE0DC]" />
+              <path d="M 50 58 Q 84 40 64 14 Q 50 6 50 10" className="stroke-[#7BE0DC]" />
             </svg>
           </div>
 
-          {/* Pose 2 圖示卡片 */}
-          <div className="flex items-center justify-center p-2 rounded-2xl bg-[#141414] border-none shadow-none">
+          {/* Pose 2 圖示卡片：雙手水平側平舉 T-Pose */}
+          <div className="flex items-center justify-center p-3.5 sm:p-5 rounded-3xl bg-[rgba(10,16,15,0.88)] border-2 border-[#4CA6A8]/85 shadow-[0_8px_24px_rgba(0,0,0,0.65)]">
             <svg
-              viewBox="0 0 100 120"
-              className="w-12 h-16 sm:w-14 sm:h-20 stroke-white/90 fill-none"
-              strokeWidth="4"
+              viewBox="0 0 100 100"
+              className="w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 fill-none"
+              strokeWidth="6"
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <circle cx="50" cy="30" r="10" strokeWidth="3.5" />
-              <line x1="50" y1="40" x2="50" y2="80" />
-              <line x1="12" y1="50" x2="88" y2="50" />
-              <line x1="50" y1="80" x2="35" y2="115" />
-              <line x1="50" y1="80" x2="65" y2="115" />
+              <circle cx="50" cy="28" r="11" className="stroke-white" strokeWidth="5.5" />
+              <line x1="50" y1="40" x2="50" y2="88" className="stroke-white" />
+              <line x1="8" y1="50" x2="92" y2="50" className="stroke-[#7BE0DC]" />
             </svg>
           </div>
 
-          {/* Pose 3 圖示卡片 */}
-          <div className="flex items-center justify-center p-2 rounded-2xl bg-[#141414] border-none shadow-none">
+          {/* Pose 3 圖示卡片：單手高舉指天、另一手置於胸前 */}
+          <div className="flex items-center justify-center p-3.5 sm:p-5 rounded-3xl bg-[rgba(10,16,15,0.88)] border-2 border-[#4CA6A8]/85 shadow-[0_8px_24px_rgba(0,0,0,0.65)]">
             <svg
-              viewBox="0 0 100 120"
-              className="w-12 h-16 sm:w-14 sm:h-20 stroke-white/90 fill-none"
-              strokeWidth="4"
+              viewBox="0 0 100 100"
+              className="w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 fill-none"
+              strokeWidth="6"
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <circle cx="50" cy="30" r="10" strokeWidth="3.5" />
-              <line x1="50" y1="40" x2="50" y2="80" />
-              <path d="M 50 50 L 78 20" />
-              <path d="M 50 50 L 32 55 L 42 62" />
-              <line x1="50" y1="80" x2="35" y2="115" />
-              <line x1="50" y1="80" x2="65" y2="115" />
+              <circle cx="50" cy="28" r="11" className="stroke-white" strokeWidth="5.5" />
+              <line x1="50" y1="40" x2="50" y2="88" className="stroke-white" />
+              <path d="M 50 50 L 82 14" className="stroke-[#7BE0DC]" />
+              <path d="M 50 50 L 26 56 L 42 66" className="stroke-[#7BE0DC]" />
             </svg>
           </div>
         </div>

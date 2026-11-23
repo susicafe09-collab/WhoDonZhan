@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 
 export type EndemicAnimalType =
   | 'macaca_cyclopis'                       // 台灣獼猴
@@ -45,12 +45,27 @@ export const getRandomAppearance = (): AnimalAppearanceType => {
 
 export const useAnimalTracking = (faces: any[], poses: any[]) => {
   const trackersRef = useRef<TrackedAnimal[]>([]);
-  const [renderState, setRenderState] = useState<TrackedAnimal[]>([]);
+  const lastInputsRef = useRef<{ faces: any[]; poses: any[]; tick: number } | null>(null);
+  const lastSnapshotRef = useRef<TrackedAnimal[]>([]);
 
-  useEffect(() => {
+  // 僅於人物離開畫面且尚有殘留動物淡出時，用來驅動淡出清除的非同步計時 tick
+  const [cleanupTick, setCleanupTick] = useState(0);
+
+  const trackers = useMemo(() => {
+    const prevInputs = lastInputsRef.current;
+    if (
+      prevInputs &&
+      prevInputs.faces === faces &&
+      prevInputs.poses === poses &&
+      prevInputs.tick === cleanupTick
+    ) {
+      return lastSnapshotRef.current;
+    }
+    lastInputsRef.current = { faces, poses, tick: cleanupTick };
+
     const now = performance.now();
     const currentTrackers = trackersRef.current;
-    
+
     // 統一依賴 FaceLandmarker 臉部節點進行追蹤
     const detections: { x: number; y: number; face: any }[] = [];
     for (let i = 0; i < faces.length; i++) {
@@ -62,7 +77,7 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
     }
 
     const matchedDetectionIndices = new Set<number>();
-    
+
     // 1. 更新現有動物
     for (const tracker of currentTrackers) {
       let bestMatchIdx = -1;
@@ -75,56 +90,54 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
           bestMatchIdx = i;
         }
       }
-      
+
       if (bestMatchIdx !== -1) {
         matchedDetectionIndices.add(bestMatchIdx);
         const det = detections[bestMatchIdx];
         const alpha = 0.22; // Lerp 平滑追隨係數
-        
+
         let targetX = tracker.x;
         let targetY = tracker.y;
         let targetWidth = tracker.width;
-        
+
         // 核心錨定：統一綁定在 FaceLandmarker 臉部節點
         if (det.face) {
           const faceTop = det.face[10];     // 額頭 / 頭頂最高節點
           const faceBottom = det.face[152]; // 下巴節點
           const cheek1 = det.face[234];     // 左臉頰邊界
           const cheek2 = det.face[454];     // 右臉頰邊界
-          
+
           if (faceTop && faceBottom && cheek1 && cheek2) {
             const faceWidth = dist(cheek1.x, cheek1.y, cheek2.x, cheek2.y);
             const faceHeight = dist(faceTop.x, faceTop.y, faceBottom.x, faceBottom.y);
-            
+
             // X 軸統一對齊頭頂中心
             targetX = faceTop.x;
-            
-            // 針對 5 種新動物體型特徵微調合適的 targetY 與 targetWidth：
-            // 放寬上下限範圍為 Math.min(0.45, Math.max(0.08, faceWidth * 比例))
-            // 避免遠距離時人頭小動物卻巨大，近距離特寫時動物塞滿螢幕
+
+            // 針對 5 種新動物體型特徵微調合適的 targetY 與 targetWidth
             switch (tracker.type) {
               case 'graphium_sarpedon_connectens': // 青帶鳳蝶
-                targetY = faceTop.y - faceHeight * 0.58; // 飛高一點
+                targetY = faceTop.y - faceHeight * 0.58;
                 targetWidth = Math.min(0.45, Math.max(0.08, faceWidth * 1.45));
                 break;
-                
+
               case 'diploderma_polygonatum_xanthostomum': // 黃口攀蜥
-                targetY = faceTop.y - faceHeight * 0.28; // 貼近頭頂
+                targetY = faceTop.y - faceHeight * 0.28;
                 targetWidth = Math.min(0.45, Math.max(0.08, faceWidth * 1.35));
                 break;
-                
+
               case 'sylvirana_guentheri': // 貢德氏赤蛙
-                targetY = faceTop.y - faceHeight * 0.30; // 貼近頭頂趴著
+                targetY = faceTop.y - faceHeight * 0.30;
                 targetWidth = Math.min(0.45, Math.max(0.08, faceWidth * 1.4));
                 break;
-                
+
               case 'macaca_cyclopis': // 台灣獼猴
-                targetY = faceTop.y - faceHeight * 0.42; // 標準頭頂位置
+                targetY = faceTop.y - faceHeight * 0.42;
                 targetWidth = Math.min(0.45, Math.max(0.08, faceWidth * 1.6));
                 break;
-                
+
               case 'lophura_swinhoii': // 藍腹鷴
-                targetY = faceTop.y - faceHeight * 0.48; // 羽冠稍高展現優雅
+                targetY = faceTop.y - faceHeight * 0.48;
                 targetWidth = Math.min(0.45, Math.max(0.08, faceWidth * 1.65));
                 break;
 
@@ -135,29 +148,28 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
             }
           }
         }
-        
+
         tracker.x += (targetX - tracker.x) * alpha;
         tracker.y += (targetY - tracker.y) * alpha;
         tracker.width += (targetWidth - tracker.width) * alpha;
         tracker.lastSeenAt = now;
       }
     }
-    
+
     // 2. 為新進入畫面的人物建立 Tracker（最多 3 人同框，品種盡量不重複）
     for (let i = 0; i < detections.length; i++) {
       if (!matchedDetectionIndices.has(i) && currentTrackers.length < 3) {
         const det = detections[i];
-        const usedTypes = new Set(currentTrackers.map(t => t.type));
-        const availableTypes = ENDEMIC_ANIMAL_TYPES.filter(t => !usedTypes.has(t));
-        
-        // 若全部品種都有人戴，則從全部品種中挑選
+        const usedTypes = new Set(currentTrackers.map((t) => t.type));
+        const availableTypes = ENDEMIC_ANIMAL_TYPES.filter((t) => !usedTypes.has(t));
+
         const candidatePool = availableTypes.length > 0 ? availableTypes : ENDEMIC_ANIMAL_TYPES;
         const chosenType = candidatePool[Math.floor(Math.random() * candidatePool.length)];
-        
+
         currentTrackers.push({
           id: Math.random().toString(36).substring(7),
           type: chosenType,
-          appearance: getRandomAppearance(), // 隨機抽選 Type 1 或 Type 2
+          appearance: getRandomAppearance(),
           x: det.x,
           y: det.y,
           width: 0.2,
@@ -167,26 +179,26 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
           isActive: false,
           lastRotationAt: now,
           rotationPhase: 'none',
-          transitionDuration: 1
+          transitionDuration: 1,
         });
       }
     }
-    
+
     // 3. 狀態機與輪替邏輯 (嚴格防閃爍與平滑淡入淡出)
-    const activeTrackersCount = currentTrackers.filter(t => t.isActive).length;
-    
+    const activeTrackersCount = currentTrackers.filter((t) => t.isActive).length;
+
     for (let i = currentTrackers.length - 1; i >= 0; i--) {
       const tracker = currentTrackers[i];
       const timeSinceLastSeen = now - tracker.lastSeenAt;
-      
+
       // 穩定出現 2 秒後啟動顯示
-      if (!tracker.isActive && (now - tracker.firstSeenAt) > 2000 && timeSinceLastSeen < 500) {
+      if (!tracker.isActive && now - tracker.firstSeenAt > 2000 && timeSinceLastSeen < 500) {
         tracker.isActive = true;
-        tracker.lastRotationAt = now; 
+        tracker.lastRotationAt = now;
       }
-      
+
       if (tracker.isActive) {
-        if (timeSinceLastSeen > 500) { 
+        if (timeSinceLastSeen > 500) {
           // 人物離開視線
           tracker.opacity = 0;
           tracker.transitionDuration = 0.5;
@@ -196,9 +208,8 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
           // 單人模式：5 秒輪替切換機制
           if (activeTrackersCount === 1) {
             const timeSinceRot = now - tracker.lastRotationAt;
-            
+
             if (tracker.rotationPhase === 'none') {
-              // 顯示滿 5 秒後啟動淡出
               if (timeSinceRot > 5000) {
                 tracker.rotationPhase = 'fading_out';
                 tracker.lastRotationAt = now;
@@ -208,11 +219,10 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
                 tracker.opacity = 1;
               }
             } else if (tracker.rotationPhase === 'fading_out') {
-              // 淡出完成（1.5 秒），抽選下一隻動物與隨機外觀型態
               if (timeSinceRot >= 1500) {
-                const availableTypes = ENDEMIC_ANIMAL_TYPES.filter(t => t !== tracker.type);
+                const availableTypes = ENDEMIC_ANIMAL_TYPES.filter((t) => t !== tracker.type);
                 tracker.type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
-                tracker.appearance = getRandomAppearance(); // 隨機抽選 Type 1 或 Type 2
+                tracker.appearance = getRandomAppearance();
                 tracker.rotationPhase = 'fading_in';
                 tracker.lastRotationAt = now;
                 tracker.opacity = 1;
@@ -224,7 +234,7 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
               tracker.opacity = 1;
               if (timeSinceRot >= 1500) {
                 tracker.rotationPhase = 'none';
-                tracker.lastRotationAt = now; 
+                tracker.lastRotationAt = now;
                 tracker.transitionDuration = 1;
               }
             }
@@ -244,13 +254,28 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
         currentTrackers.splice(i, 1);
       }
     }
-    
-    if (currentTrackers.length === 0) {
-      setRenderState((prev) => (prev.length === 0 ? prev : []));
-    } else {
-      setRenderState([...currentTrackers]);
-    }
-  }, [faces, poses]); // 保留 poses 參數以維持呼叫簽章相容性
 
-  return renderState;
+    if (currentTrackers.length === 0) {
+      if (lastSnapshotRef.current.length !== 0) {
+        lastSnapshotRef.current = [];
+      }
+      return lastSnapshotRef.current;
+    }
+
+    const snapshot = currentTrackers.map((t) => ({ ...t }));
+    lastSnapshotRef.current = snapshot;
+    return snapshot;
+  }, [faces, poses, cleanupTick]);
+
+  // 當畫面已無人臉但仍有殘留 tracker 等待淡出/移除時，排程一次延遲清理（避免無新幀時卡住）
+  const hasPendingCleanup = faces.length === 0 && trackers.length > 0;
+  useEffect(() => {
+    if (!hasPendingCleanup) return;
+    const timer = window.setTimeout(() => {
+      setCleanupTick((c) => c + 1);
+    }, 550);
+    return () => window.clearTimeout(timer);
+  }, [hasPendingCleanup, cleanupTick]);
+
+  return trackers;
 };

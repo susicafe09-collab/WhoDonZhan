@@ -121,36 +121,36 @@ export const Plant: React.FC<PlantProps> = ({
   const transformString = `translate3d(${currentXPercent}%, ${currentYPercent}%, 0) rotate(${currentRotate}deg) scale(${currentScale})`;
 
   // Root wrapper styles:
-  // 採用相對於 AR 畫布的百分比尺寸，確保在橫式視窗、直式平板或 9:16 直立大螢幕上皆等比精準對齊
-  const offsetPercent = plant.horizontalOffsetPercent ?? 1;
+  // 強制錨定至畫面最外緣並套用 -5% 負邊距，確保底部與左右邊緣植物根莖緊貼螢幕邊框不浮空
+  const offsetPercent = plant.horizontalOffsetPercent ?? -5;
   const rootStyle: React.CSSProperties = isBottom
     ? {
-        bottom: 0,
+        bottom: '-5%',
         [isLeft ? 'left' : 'right']: `${offsetPercent}%`,
-        width: '37%',
-        height: '25%',
+        width: '42%',
+        height: '29%',
       }
     : {
         top: `${plant.topPercent ?? 20}%`,
         [isLeft ? 'left' : 'right']: `${offsetPercent}%`,
-        width: '31%',
-        height: '18.5%',
+        width: '35%',
+        height: '21%',
       };
 
   return (
     <div
       id={`plant-wrapper-${plant.id}`}
-      className={`absolute select-none pointer-events-auto z-25 overflow-visible opacity-100 ${
-        isBottom ? 'bottom-0' : ''
-      }`}
+      className="absolute select-none pointer-events-auto z-25 overflow-visible opacity-100"
       style={rootStyle}
     >
-      {/* Shared state-driven transition container - always full opacity */}
+      {/* Shared state-driven transition container - always full opacity, GPU transform transition */}
       <div
         id={`plant-motion-${plant.id}`}
-        className={`relative cursor-pointer group flex flex-col items-center ${
+        className={`relative cursor-pointer group flex flex-col ${
+          isLeft ? 'items-start' : 'items-end'
+        } ${
           isBottom ? 'justify-end' : 'justify-start'
-        } transition-all duration-700 ease-out will-change-transform w-full h-full`}
+        } transition-transform duration-500 ease-out will-change-transform w-full h-full`}
         style={{
           transformOrigin,
           transform: transformString,
@@ -161,7 +161,9 @@ export const Plant: React.FC<PlantProps> = ({
       >
         {/* Subtle breathing sway when resting / wave twitch when stroked */}
         <div
-          className={`w-full h-full flex ${isBottom ? 'items-end' : 'items-start'} justify-center ${
+          className={`w-full h-full flex ${isBottom ? 'items-end' : 'items-start'} ${
+            isLeft ? 'justify-start' : 'justify-end'
+          } ${
             !plant.isPushed
               ? isBottom
                 ? 'animate-plant-sway-bottom'
@@ -172,9 +174,9 @@ export const Plant: React.FC<PlantProps> = ({
             transformOrigin,
           }}
         >
-          {/* Mirror flip container */}
+          {/* Mirror flip container: 內部統一靠左對齊，經 scaleX(-1) 翻轉後右側植物亦緊貼右邊界 */}
           <div
-            className={`w-full h-full flex ${isBottom ? 'items-end' : 'items-start'} justify-center`}
+            className={`w-full h-full flex ${isBottom ? 'items-end' : 'items-start'} justify-start`}
             style={{
               transform: isMirrored ? 'scaleX(-1)' : 'scaleX(1)',
             }}
@@ -183,8 +185,8 @@ export const Plant: React.FC<PlantProps> = ({
               src={resolvedImage}
               alt={plant.name || `植物素材 - ${isLeft ? '左側' : '右側'}`}
               className={`w-full h-full object-contain ${
-                isBottom ? 'object-bottom' : 'object-top'
-              } pointer-events-none select-none transition-opacity duration-300`}
+                isBottom ? 'object-left-bottom' : 'object-left-top'
+              } pointer-events-none select-none`}
               loading="eager"
               draggable={false}
             />

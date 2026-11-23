@@ -1,12 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useMediaPipe } from '../hooks/useMediaPipe';
+import { useMediaPipe, CameraRotationDeg } from '../hooks/useMediaPipe';
 import { useLeafHandTracking } from '../hooks/useLeafHandTracking';
-import { useRightClickControls } from '../hooks/useRightClickControls';
-import {
-  VideoCoverProjection,
-  IDENTITY_VIDEO_PROJECTION,
-  computeVideoCoverProjection,
-} from '../utils/videoProjection';
+import { useScreenRatio } from '../hooks/useScreenRatio';
 import AnimalMode from './AnimalMode';
 import LandscapeMode from './LandscapeMode';
 import { Plant } from './Plant';
@@ -14,13 +9,19 @@ import LeafBorder from './LeafBorder';
 import { PlantItem, MuzhaPlantInfo } from '../types';
 import { soundManager } from '../utils/sound';
 import { syncSocket } from '../utils/syncSocket';
-import { MUZHA_PLANTS_DATA, CONCISE_PLANT_DESCRIPTIONS } from '../data/knowledgeData';
+import {
+  MUZHA_PLANTS_DATA,
+  CONCISE_PLANT_DESCRIPTIONS,
+  SIDE_PLANT_POOLS,
+  BOTTOM_PLANT_POOLS,
+} from '../data/knowledgeData';
 import {
   Mountain,
   Dog,
   Leaf,
   RefreshCw,
   AlertCircle,
+  Smartphone,
   Maximize2,
   Minimize2,
   RotateCcw,
@@ -39,85 +40,82 @@ import {
 
 export type UnifiedMode = 'leaves' | 'animal' | 'landscape';
 
+// ─────────────────────────────────────────────────────────────
+// 實體鏡頭方向與鏡像校正參數（支援 0 / 90 / -90，方便現場微調）
+// 0 = 鏡頭橫放平擺（一般狀態）；90 / -90 = 鏡頭實體側轉 90 度安裝時使用
+// ─────────────────────────────────────────────────────────────
+export const CAMERA_ROTATION: CameraRotationDeg = 0;
+export const MIRROR_VIDEO = true;
+
+// ─────────────────────────────────────────────────────────────
+// 進場 3 秒防誤觸狀態機 — 可微調常數設定
+// ─────────────────────────────────────────────────────────────
+type PresenceState = 'IDLE' | 'DETECTING' | 'ACTIVE' | 'COOLDOWN';
+
+const ENTRY_X_MIN = 0.25; // IDLE / DETECTING 水平有效左邊界
+const ENTRY_X_MAX = 0.75; // IDLE / DETECTING 水平有效右邊界
+const ACTIVE_X_MIN = 0.15; // ACTIVE / COOLDOWN 放寬水平左邊界
+const ACTIVE_X_MAX = 0.85; // ACTIVE / COOLDOWN 放寬水平右邊界
+const MIN_SHOULDER_WIDTH = 0.15; // 距離門檻：雙肩寬度比例 >= 0.15
+const MIN_SHOULDER_VISIBILITY = 0.3; // 肩膀關鍵點最低可見度
+const DETECTING_DURATION_MS = 3000; // 進場確認計時 (3 秒)
+const DETECTING_LOSS_TOLERANCE_MS = 500; // DETECTING 期間瞬間漏偵測容忍時間 (500ms)
+const COOLDOWN_DURATION_MS = 2500; // 離場緩衝計時 (2.5 秒)
+const PRESENCE_TICK_MS = 100; // 狀態機計時檢查間隔
+const EMPTY_LANDMARKS: any[] = []; // 停用互動時傳入的穩定空陣列，避免不必要 re-render
+
+// 高質感明暗過渡層設定（不使用 blur）
+const DIM_OVERLAY_GRADIENT =
+  'radial-gradient(circle at center, rgba(8, 12, 10, 0.58) 0%, rgba(4, 7, 6, 0.88) 100%)';
+const DIM_OVERLAY_OPACITY: Record<PresenceState, number> = {
+  IDLE: 1,
+  DETECTING: 0.55,
+  ACTIVE: 0,
+  COOLDOWN: 0,
+};
+
+const hasValidPresencePerson = (
+  poseList: any[],
+  useRelaxedBounds: boolean
+): boolean => {
+  if (!poseList || poseList.length === 0) return false;
+  const minX = useRelaxedBounds ? ACTIVE_X_MIN : ENTRY_X_MIN;
+  const maxX = useRelaxedBounds ? ACTIVE_X_MAX : ENTRY_X_MAX;
+
+  for (let i = 0; i < poseList.length; i++) {
+    const pose = poseList[i];
+    if (!pose) continue;
+
+    const lShoulder = pose[11];
+    const rShoulder = pose[12];
+    if (!lShoulder || !rShoulder) continue;
+
+    if (
+      (typeof lShoulder.visibility === 'number' &&
+        lShoulder.visibility < MIN_SHOULDER_VISIBILITY) ||
+      (typeof rShoulder.visibility === 'number' &&
+        rShoulder.visibility < MIN_SHOULDER_VISIBILITY)
+    ) {
+      continue;
+    }
+
+    const shoulderCenterX = (lShoulder.x + rShoulder.x) * 0.5;
+    const shoulderWidth = Math.abs(lShoulder.x - rShoulder.x);
+
+    if (
+      shoulderCenterX >= minX &&
+      shoulderCenterX <= maxX &&
+      shoulderWidth >= MIN_SHOULDER_WIDTH
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
 interface MediaPipeViewProps {
   initialMode?: UnifiedMode;
 }
-
-interface TrackingLayerProps {
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  activeMode: UnifiedMode;
-  plants: PlantItem[];
-  projection: VideoCoverProjection;
-  showLoading: boolean;
-  onWaveStroke: (plantId: string) => void;
-  onActiveAnimalChange: (target: string | null) => void;
-  onActiveLandscapeChange: (target: string | null) => void;
-}
-
-/**
- * 鏡頭辨識層：MediaPipe 每一格畫面都會更新 poses/faces。
- * 把它們關在這個小元件裡，每格只重畫這裡，外面的大畫面和面板不跟著重畫。
- */
-const TrackingLayer = React.memo(function TrackingLayer({
-  videoRef,
-  activeMode,
-  plants,
-  projection,
-  showLoading,
-  onWaveStroke,
-  onActiveAnimalChange,
-  onActiveLandscapeChange,
-}: TrackingLayerProps) {
-  const { faces, poses, isLoaded } = useMediaPipe(videoRef, activeMode === 'animal');
-
-  // 撥葉子手勢偵測 (傳入最新直式／橫式畫布投影，確保手勢座標零偏移)
-  useLeafHandTracking({
-    poses,
-    faces,
-    plants,
-    enabled: activeMode === 'leaves',
-    requiredWaveCount: 1,
-    projection,
-    onWaveStroke,
-  });
-
-  return (
-    <>
-      {!isLoaded && showLoading && (
-        <div className="absolute inset-0 flex items-center justify-center z-40 bg-black/85">
-          <div className="flex flex-col items-center dark-glow-card px-6 py-5 rounded-3xl">
-            <div className="relative z-10 flex flex-col items-center">
-              <div className="w-8 h-8 border-3 border-t-[#28887A] border-r-[#28887A] border-b-transparent border-l-transparent rounded-full animate-spin"></div>
-              <p className="mt-3 text-white font-semibold text-xs tracking-wider">
-                載入 MediaPipe 姿態識別中...
-              </p>
-              <p className="text-[11px] text-[#4CA6A8] mt-0.5">本地端模組秒速載入中</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2. Mode: 動物互動模式 (傳入 videoProjection 確保直式／橫式頭飾座標精準貼合) */}
-      {activeMode === 'animal' && (
-        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
-          <AnimalMode
-            faces={faces}
-            poses={poses}
-            projection={projection}
-            onActiveAnimalChange={onActiveAnimalChange}
-          />
-        </div>
-      )}
-
-      {/* 3. Mode: 風景手勢模式 (z-50 頂層獨立透明度渲染，含距離提示與第二螢幕同步) */}
-      {activeMode === 'landscape' && (
-        <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
-          <LandscapeMode poses={poses} onActiveLandscapeChange={onActiveLandscapeChange} />
-        </div>
-      )}
-    </>
-  );
-});
 
 export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   initialMode = 'leaves',
@@ -128,6 +126,8 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   // 當前大螢幕觸發並展示的目標（動物代號、山嶽代號、或葉片撥開狀態），同步給平板顯示知識看板
   const [activeAnimalTarget, setActiveAnimalTarget] = useState<string | null>(null);
   const [activeLandscapeTarget, setActiveLandscapeTarget] = useState<string | null>(null);
+  const activeAnimalTargetRef = useRef<string | null>(null);
+  const activeLandscapeTargetRef = useRef<string | null>(null);
 
   // 手動強制 Override 目標（若有設定，將優先發送）
   const [manualOverrideTarget, setManualOverrideTarget] = useState<string | null>(null);
@@ -139,52 +139,41 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [hasCamera, setHasCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const cameraErrorRef = useRef<string | null>(null);
+  const [isPhoneFrame, setIsPhoneFrame] = useState(true);
 
   // 原生 Fullscreen 狀態 (跨瀏覽器監聽同步)
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // 展示模式：平常不顯示任何按鈕面板，接滑鼠按右鍵才叫出設定
-  const showControls = useRightClickControls();
-  const immersive = isFullscreen || !showControls;
+  // 自動偵測螢幕比例與直／橫方向 (Portrait / Landscape)，同步根元素 .is-portrait
+  const { isPortrait, isWideLandscape, width: screenWidth, height: screenHeight } = useScreenRatio();
 
-
-  // 底部平板測試抽屜（預設收合，避免遮擋中央互動區）
+  // 直式模式下可收合之底部平板測試抽屜（預設精簡收合，避免遮擋中央互動區）
   const [showPortraitOverride, setShowPortraitOverride] = useState(false);
 
-  // 互動畫布與視訊 object-fit: cover 精確座標投影狀態（確保旋轉直式後追蹤座標零偏移）
-  const [videoProjection, setVideoProjection] = useState<VideoCoverProjection>(
-    IDENTITY_VIDEO_PROJECTION
-  );
+  // 互動舞台實際尺寸（提供旋轉 90° 的 1080p <video> 與 180x320 離屏畫布精確 1:1 對齊）
+  const [stageSize, setStageSize] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
+  const stageSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
-  const recalcVideoProjection = useCallback(() => {
+  const recalcStageSize = useCallback(() => {
     const stageEl = stageRef.current;
-    const videoEl = videoRef.current;
     if (!stageEl) return;
-
     const rect = stageEl.getBoundingClientRect();
-    const stageW = rect.width;
-    const stageH = rect.height;
-    const videoW = videoEl?.videoWidth || 0;
-    const videoH = videoEl?.videoHeight || 0;
-
-    if (stageW <= 0 || stageH <= 0) return;
-
-    const next =
-      videoW > 0 && videoH > 0
-        ? computeVideoCoverProjection(videoW, videoH, stageW, stageH)
-        : IDENTITY_VIDEO_PROJECTION;
-
-    setVideoProjection((prev) => {
-      if (
-        prev.videoWidth === next.videoWidth &&
-        prev.videoHeight === next.videoHeight &&
-        Math.abs(prev.stageWidth - next.stageWidth) < 1 &&
-        Math.abs(prev.stageHeight - next.stageHeight) < 1
-      ) {
-        return prev;
-      }
-      return next;
-    });
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    if (w <= 0 || h <= 0) return;
+    if (
+      Math.abs(stageSizeRef.current.width - w) < 1 &&
+      Math.abs(stageSizeRef.current.height - h) < 1
+    ) {
+      return;
+    }
+    const next = { width: w, height: h };
+    stageSizeRef.current = next;
+    setStageSize(next);
   }, []);
 
   // Sound and settings
@@ -193,33 +182,165 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [showPlantInfoModal, setShowPlantInfoModal] = useState(false);
 
+  // ─────────────────────────────────────────────────────────────
+  // 進場 3 秒防誤觸四階段狀態機 (IDLE -> DETECTING -> ACTIVE -> COOLDOWN)
+  // 計時器與時間戳記全面以 ref 管理，僅於狀態實際切換時更新 state
+  // ─────────────────────────────────────────────────────────────
+  const [presenceState, setPresenceState] = useState<PresenceState>('IDLE');
+  const presenceStateRef = useRef<PresenceState>('IDLE');
+  const prevPresenceStateRef = useRef<PresenceState>('IDLE');
+  const isInteractionUnlocked =
+    presenceState === 'ACTIVE' || presenceState === 'COOLDOWN';
+
+  // 依 CAMERA_ROTATION (0 / 90 / -90) 同步套用至 <video> 與離屏偵測畫布
+  const effectiveCameraRotation = CAMERA_ROTATION as CameraRotationDeg;
+
+  // MediaPipe AI Vision（離屏 180x320 先轉正再偵測 + Lite 模型 + 10~12 FPS 節流 + 依模式門控）
+  const { faces, poses, isLoaded } = useMediaPipe(videoRef, {
+    activeMode,
+    cameraRotation: effectiveCameraRotation,
+    mirrorVideo: MIRROR_VIDEO,
+    isPortrait,
+    stageWidth: stageSize.width,
+    stageHeight: stageSize.height,
+    isInteractionUnlocked,
+  });
+
+  const latestPosesRef = useRef<any[]>(poses);
+  latestPosesRef.current = poses;
+
+  const detectingStartAtRef = useRef<number | null>(null);
+  const lastValidSeenAtRef = useRef<number | null>(null);
+  const cooldownStartAtRef = useRef<number | null>(null);
+  const presenceTimerRef = useRef<number | null>(null);
+
+  // 明暗過渡層與底層畫面色調呼應（退回待機 2s ease-in-out，其餘 1.4s cubic-bezier）
+  const dimOverlayOpacity = DIM_OVERLAY_OPACITY[presenceState];
+  const dimTransitionCurve =
+    presenceState === 'IDLE'
+      ? '2s ease-in-out'
+      : '1.4s cubic-bezier(0.22, 1, 0.36, 1)';
+  const videoToneFilter =
+    presenceState === 'IDLE'
+      ? 'brightness(0.84) saturate(0.76)'
+      : presenceState === 'DETECTING'
+      ? 'brightness(0.93) saturate(0.9)'
+      : 'brightness(1) saturate(1)';
+
+  const commitPresenceState = useCallback((next: PresenceState) => {
+    if (presenceStateRef.current === next) return;
+    presenceStateRef.current = next;
+    setPresenceState(next);
+  }, []);
+
+  const evaluatePresenceState = useCallback(() => {
+    const now = performance.now();
+    const state = presenceStateRef.current;
+    const useRelaxedBounds = state === 'ACTIVE' || state === 'COOLDOWN';
+    const isValid = hasValidPresencePerson(
+      latestPosesRef.current,
+      useRelaxedBounds
+    );
+
+    if (state === 'IDLE') {
+      if (isValid) {
+        detectingStartAtRef.current = now;
+        lastValidSeenAtRef.current = now;
+        cooldownStartAtRef.current = null;
+        commitPresenceState('DETECTING');
+      }
+      return;
+    }
+
+    if (state === 'DETECTING') {
+      if (isValid) {
+        lastValidSeenAtRef.current = now;
+        if (detectingStartAtRef.current === null) {
+          detectingStartAtRef.current = now;
+        }
+        if (now - detectingStartAtRef.current >= DETECTING_DURATION_MS) {
+          detectingStartAtRef.current = null;
+          cooldownStartAtRef.current = null;
+          commitPresenceState('ACTIVE');
+        }
+      } else {
+        const lastSeen = lastValidSeenAtRef.current ?? now;
+        if (now - lastSeen > DETECTING_LOSS_TOLERANCE_MS) {
+          detectingStartAtRef.current = null;
+          lastValidSeenAtRef.current = null;
+          commitPresenceState('IDLE');
+        }
+      }
+      return;
+    }
+
+    if (state === 'ACTIVE') {
+      if (isValid) {
+        lastValidSeenAtRef.current = now;
+      } else {
+        cooldownStartAtRef.current = now;
+        commitPresenceState('COOLDOWN');
+      }
+      return;
+    }
+
+    if (state === 'COOLDOWN') {
+      if (isValid) {
+        lastValidSeenAtRef.current = now;
+        cooldownStartAtRef.current = null;
+        commitPresenceState('ACTIVE');
+      } else {
+        const cooldownStart = cooldownStartAtRef.current ?? now;
+        if (now - cooldownStart >= COOLDOWN_DURATION_MS) {
+          cooldownStartAtRef.current = null;
+          detectingStartAtRef.current = null;
+          lastValidSeenAtRef.current = null;
+          commitPresenceState('IDLE');
+        }
+      }
+    }
+  }, [commitPresenceState]);
+
+  // 每次骨架更新即時判定（不額外觸發 re-render）
+  useEffect(() => {
+    evaluatePresenceState();
+  }, [poses, evaluatePresenceState]);
+
+  // 僅在 DETECTING / COOLDOWN 期間啟動計時檢查，確保離場無新幀時仍準確超時
+  useEffect(() => {
+    if (presenceTimerRef.current !== null) {
+      window.clearInterval(presenceTimerRef.current);
+      presenceTimerRef.current = null;
+    }
+
+    if (presenceState === 'DETECTING' || presenceState === 'COOLDOWN') {
+      presenceTimerRef.current = window.setInterval(() => {
+        evaluatePresenceState();
+      }, PRESENCE_TICK_MS);
+    }
+
+    return () => {
+      if (presenceTimerRef.current !== null) {
+        window.clearInterval(presenceTimerRef.current);
+        presenceTimerRef.current = null;
+      }
+    };
+  }, [presenceState, evaluatePresenceState]);
+
   // 穩定的回調函式，避免子元件每幀重渲染
   const handleActiveAnimalChange = useCallback((target: string | null) => {
-    setActiveAnimalTarget((prev) => (prev !== target ? target : prev));
+    if (activeAnimalTargetRef.current === target) return;
+    activeAnimalTargetRef.current = target;
+    setActiveAnimalTarget(target);
   }, []);
 
   const handleActiveLandscapeChange = useCallback((target: string | null) => {
-    setActiveLandscapeTarget((prev) => (prev !== target ? target : prev));
+    if (activeLandscapeTargetRef.current === target) return;
+    activeLandscapeTargetRef.current = target;
+    setActiveLandscapeTarget(target);
   }, []);
 
-  // ─────────────────────────────────────────────────────────────
-  // 互動植物圖庫池（木柵貓空 3 種植物生態組合：地板 1 種、側邊 2 種）：
-  // 1. 側邊池（Group C 懸掛）：樟樹步道・樟楠樹冠、貓空野徑・垂懸藤葉、百年老樹・垂懸崖薑蕨
-  // 2. 地板池：木柵特產・破土綠竹筍、貓空步道・高山箭竹、銀河洞溪谷・闊葉水龍骨、茶山地被・叢生腎蕨
-  // ─────────────────────────────────────────────────────────────
-  const SIDE_PLANT_POOLS = [
-    { imageSrc: '/leaves.png', name: '樟樹步道・樟楠樹冠', group: 'C' as const },
-    { imageSrc: '/leaves_ground_5.png', name: '貓空野徑・垂懸藤葉', group: 'C' as const },
-    { imageSrc: '/leaves_ground_6.png', name: '百年老樹・垂懸崖薑蕨', group: 'C' as const },
-  ];
-
-  const BOTTOM_PLANT_POOLS = [
-    { imageSrc: '/leaves_ground_4.png', name: '木柵特產・破土綠竹筍', group: 'B' as const },
-    { imageSrc: '/leaves_ground_3.png', name: '貓空步道・高山箭竹', group: 'B' as const },
-    { imageSrc: '/leaves_ground_1.png', name: '銀河洞溪谷・闊葉水龍骨', group: 'A' as const },
-    { imageSrc: '/leaves_ground_2.png', name: '茶山地被・叢生腎蕨', group: 'A' as const },
-  ];
-
+  // 互動植物圖庫池已集中管理於 src/data/bioData.ts（經由 knowledgeData.ts 匯出）
   const pickRandomSidePlant = (currentSrc?: string, excludeSrc?: string) => {
     const choices = SIDE_PLANT_POOLS.filter(
       (p) => p.imageSrc !== currentSrc && p.imageSrc !== excludeSrc
@@ -236,35 +357,18 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     return pool[Math.floor(Math.random() * pool.length)];
   };
 
-  // ─────────────────────────────────────────────────────────────
-  // 植物槽位配置（底部左右兩側各一株，上方左右側各兩株，無重疊）：
-  // 1. side-left-1: 側邊左上（top 17%）
-  // 2. side-left-2: 側邊左中（top 50%）
-  // 3. side-right-1: 側邊右上（top 17%）
-  // 4. side-right-2: 側邊右中（top 50%）
-  // 5. bottom-left: 底部左下（bottom 0）
-  // 6. bottom-right: 底部右下（bottom 0）
-  // ─────────────────────────────────────────────────────────────
-  // 植物槽位配置（依使用者紅框標示精確調整佈局，側邊與底部植物各就其位且絕不重疊）：
-  // 1. side-left-1: 側邊左上（top 15.2%，避開上方綠葉樹冠，寬度 31%）
-  // 2. side-left-2: 側邊左中（top 35.2%，位於左上植物下方，寬度 31%）
-  // 3. side-right-1: 側邊右上（top 20.0%，避開右上方樹冠與粉紅花穗，寬度 31%）
-  // 4. side-right-2: 側邊右中（top 44.5%，位於右上植物下方，寬度 31%）
-  // 5. bottom-left: 底部左下（bottom 0，寬度 37%）
-  // 6. bottom-right: 底部右下（bottom 0，寬度 37%）
-  // ─────────────────────────────────────────────────────────────
+  // 植物槽位配置（底部與左右邊緣統一採用 -5% 負邊距錨定，確保根莖緊貼螢幕邊框不浮空）
   const [plants, setPlants] = useState<PlantItem[]>([
-    // 【側邊左上 - 紅色線框 1】
     {
       id: 'side-left-1',
       group: 'C',
       imageSrc: '/leaves_ground_5.png',
-      name: '貓空野徑・垂懸藤葉',
+      name: MUZHA_PLANTS_DATA['/leaves_ground_5.png']?.name || '貓空野徑・垂懸藤葉',
       side: 'left',
       index: 0,
       positionType: 'hanging',
       topPercent: 15.2,
-      horizontalOffsetPercent: 1,
+      horizontalOffsetPercent: -5,
       scale: 0.95,
       baseRotate: 0,
       isPushed: false,
@@ -277,17 +381,16 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       lastWaveAt: 0,
       resetCount: 0,
     },
-    // 【側邊左中 - 紅色線框 2】
     {
       id: 'side-left-2',
       group: 'C',
       imageSrc: '/leaves.png',
-      name: '樟樹步道・樟楠樹冠',
+      name: MUZHA_PLANTS_DATA['/leaves.png']?.name || '樟樹步道・樟楠樹冠',
       side: 'left',
       index: 1,
       positionType: 'hanging',
       topPercent: 35.2,
-      horizontalOffsetPercent: 1,
+      horizontalOffsetPercent: -5,
       scale: 0.95,
       baseRotate: 0,
       isPushed: false,
@@ -300,17 +403,16 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       lastWaveAt: 0,
       resetCount: 0,
     },
-    // 【側邊右上 - 紅色線框 3】
     {
       id: 'side-right-1',
       group: 'C',
       imageSrc: '/leaves_ground_6.png',
-      name: '百年老樹・垂懸崖薑蕨',
+      name: MUZHA_PLANTS_DATA['/leaves_ground_6.png']?.name || '百年老樹・垂懸崖薑蕨',
       side: 'right',
       index: 2,
       positionType: 'hanging',
       topPercent: 20.0,
-      horizontalOffsetPercent: 0.5,
+      horizontalOffsetPercent: -5,
       scale: 0.95,
       baseRotate: 0,
       isPushed: false,
@@ -323,17 +425,16 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       lastWaveAt: 0,
       resetCount: 0,
     },
-    // 【側邊右中 - 紅色線框 4】
     {
       id: 'side-right-2',
       group: 'C',
       imageSrc: '/leaves_ground_5.png',
-      name: '貓空野徑・垂懸藤葉',
+      name: MUZHA_PLANTS_DATA['/leaves_ground_5.png']?.name || '貓空野徑・垂懸藤葉',
       side: 'right',
       index: 3,
       positionType: 'hanging',
       topPercent: 44.5,
-      horizontalOffsetPercent: 0.5,
+      horizontalOffsetPercent: -5,
       scale: 0.95,
       baseRotate: 0,
       isPushed: false,
@@ -346,16 +447,15 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       lastWaveAt: 0,
       resetCount: 0,
     },
-    // 【底部左下 - 紅色線框 5】
     {
       id: 'bottom-left',
       group: 'A',
-      imageSrc: '/leaves_ground_1.png',
-      name: '銀河洞溪谷・闊葉水龍骨',
+      imageSrc: '/leaves_ground_2.png',
+      name: MUZHA_PLANTS_DATA['/leaves_ground_2.png']?.name || '鐵觀音',
       side: 'left',
       index: 4,
       positionType: 'bottom',
-      horizontalOffsetPercent: 2,
+      horizontalOffsetPercent: -5,
       scale: 0.95,
       baseRotate: 0,
       isPushed: false,
@@ -368,16 +468,15 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       lastWaveAt: 0,
       resetCount: 0,
     },
-    // 【底部右下 - 紅色線框 6】
     {
       id: 'bottom-right',
       group: 'B',
       imageSrc: '/leaves_ground_4.png',
-      name: '木柵特產・破土綠竹筍',
+      name: MUZHA_PLANTS_DATA['/leaves_ground_4.png']?.name || '木柵特產・破土綠竹筍',
       side: 'right',
       index: 5,
       positionType: 'bottom',
-      horizontalOffsetPercent: 0.5,
+      horizontalOffsetPercent: -5,
       scale: 0.95,
       baseRotate: 0,
       isPushed: false,
@@ -392,11 +491,10 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     },
   ]);
 
-  // 提前預載所有 7 款植物圖檔，防止替換植物時出現瀏覽器非同步解碼白閃或延遲跳圖
+  // 提前預載所有 6 款植物圖檔，防止替換植物時出現瀏覽器非同步解碼白閃或延遲跳圖
   useEffect(() => {
     const allPlantImages = [
       '/leaves.png',
-      '/leaves_ground_1.png',
       '/leaves_ground_2.png',
       '/leaves_ground_3.png',
       '/leaves_ground_4.png',
@@ -443,6 +541,36 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     });
   }, [plants]);
 
+  // 當狀態機由 COOLDOWN / DETECTING 平滑重置回 IDLE 時，清空殘留互動狀態
+  useEffect(() => {
+    const prevState = prevPresenceStateRef.current;
+    prevPresenceStateRef.current = presenceState;
+
+    if (prevState !== 'IDLE' && presenceState === 'IDLE') {
+      if (activeAnimalTargetRef.current !== null) {
+        activeAnimalTargetRef.current = null;
+        setActiveAnimalTarget(null);
+      }
+      if (activeLandscapeTargetRef.current !== null) {
+        activeLandscapeTargetRef.current = null;
+        setActiveLandscapeTarget(null);
+      }
+      setPlants((prev) => {
+        const hasInteractiveState = prev.some(
+          (p) => p.isPushed || p.waveCount > 0
+        );
+        if (!hasInteractiveState) return prev;
+        return prev.map((p) => ({
+          ...p,
+          isPushed: false,
+          pushedAt: null,
+          remainingSeconds: autoReturnSeconds,
+          waveCount: 0,
+        }));
+      });
+    }
+  }, [presenceState, autoReturnSeconds]);
+
   // ─────────────────────────────────────────────────────────────
   // 雙螢幕同步發送邏輯 (Socket.io Second Screen Sync)
   // 當模式改變、動物出現、山嶽手勢或葉片撥開時，即時廣播給平板展示專屬故事
@@ -452,6 +580,8 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     let target: string | null = null;
     if (manualOverrideTarget) {
       target = manualOverrideTarget;
+    } else if (!isInteractionUnlocked) {
+      target = null;
     } else if (activeMode === 'leaves') {
       target = hasAnyLeafPushed ? 'leaf_parted' : null;
     } else if (activeMode === 'animal') {
@@ -474,6 +604,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     hasAnyLeafPushed,
     manualOverrideTarget,
     currentActivePlants,
+    isInteractionUnlocked,
   ]);
 
   // 手動快速測試連動按鈕觸發函數
@@ -572,6 +703,12 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   // Handle hand wave gesture stroke detected on a plant
   const handleWaveStroke = useCallback(
     (plantId: string) => {
+      if (
+        presenceStateRef.current !== 'ACTIVE' &&
+        presenceStateRef.current !== 'COOLDOWN'
+      ) {
+        return;
+      }
       const now = Date.now();
       setPlants((prev) => {
         const target = prev.find((p) => p.id === plantId);
@@ -615,9 +752,24 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     [autoReturnSeconds, soundEnabled]
   );
 
+  // Hook for strict hand-only tracking (15, 16, 19, 20; 座標已由離屏畫布對齊螢幕)
+  useLeafHandTracking({
+    poses: isInteractionUnlocked ? poses : EMPTY_LANDMARKS,
+    plants: visiblePlants,
+    enabled: activeMode === 'leaves' && isInteractionUnlocked,
+    requiredWaveCount: 1,
+    onWaveStroke: handleWaveStroke,
+  });
+
   // Push / Part a plant directly (click/touch fallback)
   const handlePushPlant = useCallback(
     (plantId: string) => {
+      if (
+        presenceStateRef.current !== 'ACTIVE' &&
+        presenceStateRef.current !== 'COOLDOWN'
+      ) {
+        return;
+      }
       const now = Date.now();
       setPlants((prev) => {
         const target = prev.find((p) => p.id === plantId);
@@ -818,8 +970,13 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                 waveCount: 0,
                 resetCount: (plant.resetCount || 0) + 1,
               };
+            } else if (Math.abs(plant.remainingSeconds - remaining) > 0.08) {
+              hasChanges = true;
+              return {
+                ...plant,
+                remainingSeconds: remaining,
+              };
             }
-            // 倒數數字由 Plant 裡的倒數小圓圈自己算，不在這裡每 80ms 更新整頁
           }
 
           return plant;
@@ -832,9 +989,12 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     return () => clearInterval(interval);
   }, [autoReturnSeconds, soundEnabled]);
 
-  // Start / Maintain Camera
+  // Start / Maintain Camera (維持請求 1920x1080 Full HD 滿畫質)
   const startCamera = useCallback(async () => {
-    setCameraError(null);
+    if (cameraErrorRef.current !== null) {
+      cameraErrorRef.current = null;
+      setCameraError(null);
+    }
     try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -848,8 +1008,8 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
         },
       });
 
@@ -859,7 +1019,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play().catch((e) => console.warn('Play interrupted:', e));
           setHasCamera(true);
-          recalcVideoProjection();
+          recalcStageSize();
         };
       }
     } catch (err: any) {
@@ -871,10 +1031,11 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       const errMsg = isPermissionDenied
         ? '相機權限未開放（已為您啟動展示模擬模式，可直接點擊葉片或使用面板測試）'
         : '未偵測到攝影機（已啟用展示模擬模式）';
+      cameraErrorRef.current = errMsg;
       setCameraError(errMsg);
       setHasCamera(false);
     }
-  }, [recalcVideoProjection]);
+  }, [recalcStageSize]);
 
   useEffect(() => {
     startCamera();
@@ -885,53 +1046,110 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
         streamRef.current = null;
       }
     };
-  }, []);
+  }, [startCamera]);
 
-  // 叫出／收起設定或進出全螢幕後，重算鏡頭畫面和互動座標的對應
+  // 螢幕方向／尺寸切換時重新量測舞台像素寬高，確保旋轉 90° 的 1080p <video> 與離屏畫布精準對齊
   useEffect(() => {
-    const timer = window.setTimeout(recalcVideoProjection, 60);
+    recalcStageSize();
+    const timer = window.setTimeout(recalcStageSize, 60);
     return () => window.clearTimeout(timer);
-  }, [immersive, recalcVideoProjection]);
+  }, [isPortrait, screenWidth, screenHeight, isFullscreen, isPhoneFrame, recalcStageSize]);
 
-  // 透過 ResizeObserver 與 video resize 即時追蹤互動畫布尺寸變化，確保互動座標精準對齊
   useEffect(() => {
     const stageEl = stageRef.current;
-    const videoEl = videoRef.current;
-
-    recalcVideoProjection();
+    recalcStageSize();
 
     let ro: ResizeObserver | null = null;
     if (stageEl && typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => {
-        recalcVideoProjection();
+        recalcStageSize();
       });
       ro.observe(stageEl);
     }
 
-    const handleVideoResize = () => recalcVideoProjection();
-    videoEl?.addEventListener('resize', handleVideoResize);
-    videoEl?.addEventListener('loadedmetadata', handleVideoResize);
-
     return () => {
       ro?.disconnect();
-      videoEl?.removeEventListener('resize', handleVideoResize);
-      videoEl?.removeEventListener('loadedmetadata', handleVideoResize);
     };
-  }, [recalcVideoProjection]);
+  }, [recalcStageSize]);
+
+  // 計算 <video> 樣式：旋轉 ±90° 時絕對定位居中、寬高對調 (100dvh × 100vw)，
+  // 並維持 scaleX(-1) 在 rotate(90deg) 之前，確保先順時針轉正再左右鏡像、滿版無黑邊
+  const isQuarterTurn =
+    effectiveCameraRotation === 90 || effectiveCameraRotation === -90;
+  const videoTransform = isQuarterTurn
+    ? `translate(-50%, -50%) ${MIRROR_VIDEO ? 'scaleX(-1) ' : ''}rotate(${effectiveCameraRotation}deg)`
+    : MIRROR_VIDEO
+    ? 'scaleX(-1)'
+    : 'none';
+
+  const useViewportDims = isPortrait || isFullscreen;
+  const videoStyle: React.CSSProperties = isQuarterTurn
+    ? {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        width: useViewportDims
+          ? '100dvh'
+          : stageSize.height > 0
+          ? `${stageSize.height}px`
+          : '100dvh',
+        height: useViewportDims
+          ? '100vw'
+          : stageSize.width > 0
+          ? `${stageSize.width}px`
+          : '100vw',
+        maxWidth: 'none',
+        maxHeight: 'none',
+        objectFit: 'cover',
+        objectPosition: 'center',
+        transform: videoTransform,
+        filter: videoToneFilter,
+        transition: `filter ${dimTransitionCurve}`,
+      }
+    : {
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+        objectPosition: 'center',
+        transform: videoTransform,
+        filter: videoToneFilter,
+        transition: `filter ${dimTransitionCurve}`,
+      };
 
   return (
     <div
-      className="relative w-screen h-[100dvh] font-sans select-none overflow-hidden bg-[#0A0A0A] flex items-center justify-center"
+      className={`relative w-screen h-[100dvh] font-sans select-none overflow-hidden bg-[#0A0A0A] transition-all duration-300 ${
+        isFullscreen
+          ? 'flex items-center justify-center p-0'
+          : isPortrait
+          ? 'portrait-stage-canvas block p-0'
+          : isWideLandscape
+          ? 'grid grid-cols-[minmax(0,1fr)_350px] lg:grid-cols-[minmax(0,1fr)_400px] grid-rows-[auto_minmax(0,1fr)] gap-x-6 lg:gap-x-8 gap-y-2.5 items-start justify-center max-w-[1220px] mx-auto px-5 py-3'
+          : 'grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)_auto] justify-items-center gap-1.5 p-1.5 sm:p-2'
+      }`}
     >
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* Child 1：頂部導覽與三大模式切換群組（浮在畫面最上方）             */}
+      {/* Child 1：頂部導覽與三大模式切換群組                             */}
+      {/* - 直式 (.is-portrait)：自動懸浮錨定於頂部安全邊距 (Safe Area)，   */}
+      {/*   不擠壓亦不遮擋中央主互動區域                                  */}
+      {/* - 橫式寬螢幕：停靠於右側控制欄上方                              */}
       {/* ───────────────────────────────────────────────────────────── */}
-      {!immersive && (
+      {!isFullscreen && (
         <div
-          className="flex flex-col gap-1.5 fixed top-0 left-0 right-0 z-55 portrait-safe-top items-center pointer-events-none"
+          className={`flex flex-col gap-1.5 transition-all duration-300 ${
+            isPortrait
+              ? 'fixed top-0 left-0 right-0 z-55 portrait-safe-top items-center pointer-events-none'
+              : isWideLandscape
+              ? 'col-start-2 row-start-1 w-full z-40 pointer-events-auto'
+              : 'row-start-1 w-full max-w-lg items-center z-40 pointer-events-auto'
+          }`}
         >
           <header
-            className="w-full max-w-[680px] flex items-center justify-between px-3.5 sm:px-4 py-2 dark-glow-card rounded-2xl text-zinc-300 pointer-events-auto"
+            className={`w-full flex items-center justify-between px-3.5 sm:px-4 py-2 dark-glow-card rounded-2xl text-zinc-300 pointer-events-auto ${
+              isPortrait ? 'max-w-[680px]' : ''
+            }`}
           >
             <div className="flex items-center gap-2 relative z-10 min-w-0">
               <div className="w-2.5 h-2.5 rounded-full bg-[#28887A] shrink-0" />
@@ -963,18 +1181,30 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                 </button>
               )}
 
-              <button
-                onClick={toggleFullscreen}
-                className="p-1.5 rounded-xl btn-dark-glow-inactive text-[#4CA6A8] hover:text-white cursor-pointer"
-                title="進入純淨全螢幕 (True Fullscreen)"
-              >
-                <Maximize2 className="w-3.5 h-3.5" />
-              </button>
+              {!isPortrait && (
+                <button
+                  onClick={() => setIsPhoneFrame(!isPhoneFrame)}
+                  className="p-1.5 rounded-xl btn-dark-glow-inactive cursor-pointer"
+                  title={isPhoneFrame ? '切換為滿版視圖' : '切換為手機直式外框'}
+                >
+                  {isPhoneFrame ? <Maximize2 className="w-3.5 h-3.5 text-white" /> : <Smartphone className="w-3.5 h-3.5 text-zinc-300" />}
+                </button>
+              )}
+
+              {isPortrait && (
+                <button
+                  onClick={toggleFullscreen}
+                  className="p-1.5 rounded-xl btn-dark-glow-inactive text-[#4CA6A8] hover:text-white cursor-pointer"
+                  title="進入純淨全螢幕 (True Fullscreen)"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </header>
 
           {/* 外部三大模式切換選單 */}
-          <div className="w-full max-w-[680px] pointer-events-auto">
+          <div className={`w-full pointer-events-auto ${isPortrait ? 'max-w-[680px]' : ''}`}>
             <div className="dark-glow-card p-1.5 rounded-2xl flex items-center gap-1.5 justify-between">
               <button
                 id="mode-tab-leaves"
@@ -1030,20 +1260,39 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
       {/* ───────────────────────────────────────────────────────────── */}
       {/* Child 2：Main AR Camera Viewport Window (始終保持同一節點不重掛) */}
-      {/* 不管螢幕橫放直放，都在正中間放一塊 9:16 直立畫面（直立 1080×1920 剛好滿版） */}
+      {/* - 直式 (.is-portrait)：100vw × 100dvh 滿版鋪滿，object-fit: cover */}
+      {/* - 橫式寬螢幕：左側滿高呈現 9:16 互動舞台                          */}
       {/* ───────────────────────────────────────────────────────────── */}
       <div
         ref={viewportRef}
         id="unified-ar-viewport"
-        className="fixed inset-0 z-10 w-screen h-[100dvh] overflow-hidden flex items-center justify-center bg-black"
+        className={`overflow-hidden transition-all duration-300 flex items-center justify-center bg-black ${
+          isFullscreen
+            ? 'fixed inset-0 z-50 w-screen h-[100dvh] max-w-none max-h-none rounded-none border-none p-0'
+            : isPortrait
+            ? 'fixed inset-0 z-10 w-screen h-[100dvh] max-w-none max-h-none rounded-none border-none p-0'
+            : isWideLandscape
+            ? isPhoneFrame
+              ? 'relative col-start-1 row-start-1 row-span-2 justify-self-center h-[calc(100dvh-1.5rem)] w-auto max-w-full aspect-[9/16] rounded-3xl border-none shadow-none'
+              : 'relative col-start-1 row-start-1 row-span-2 justify-self-stretch h-[calc(100dvh-1.5rem)] w-full rounded-3xl border-none shadow-none'
+            : isPhoneFrame
+            ? 'relative row-start-2 h-full min-h-0 w-auto max-w-full aspect-[9/16] rounded-3xl border-none shadow-none'
+            : 'relative row-start-2 w-full h-full min-h-0 max-w-[540px] rounded-3xl border-none shadow-none'
+        }`}
       >
         {/* 內層舞台容器 (stageRef)：透過 ResizeObserver 同步最新寬高與投影比例 */}
         <div
           ref={stageRef}
-          className="relative h-full w-auto max-w-full aspect-[9/16] overflow-hidden flex items-center justify-center bg-black"
+          className={`relative h-full overflow-hidden flex items-center justify-center bg-black transition-all duration-300 ${
+            isFullscreen
+              ? isPortrait
+                ? 'w-full'
+                : 'w-auto max-w-full aspect-[9/16]'
+              : 'w-full'
+          }`}
         >
-          {/* 全螢幕時的退出按鈕（進入全螢幕的按鈕在頂部導覽列） */}
-          {showControls && isFullscreen && (
+          {/* 原生全螢幕切換按鈕：橫式視窗或全螢幕時呈現（直式非全螢幕時移至頂部導覽列避免重疊） */}
+          {(isFullscreen || !isPortrait) && (
             <button
               onClick={toggleFullscreen}
               className="absolute z-55 p-2.5 rounded-full bg-[#1A1A1A] hover:bg-[#28887A] text-[#4CA6A8] hover:text-white border-none shadow-none transition-all duration-200 active:scale-90 pointer-events-auto cursor-pointer"
@@ -1062,12 +1311,12 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
           )}
 
           {/* Camera Notice Toast Banner (Non-blocking, allows full interaction) */}
-          {showControls && cameraError && (
+          {cameraError && (
             <div
               className="absolute left-4 right-4 sm:right-14 z-45 flex items-center justify-between gap-2 px-3 py-2 rounded-xl dark-glow-card text-zinc-100 text-xs animate-fade-in pointer-events-auto"
               style={{
                 top:
-                  !immersive
+                  isPortrait && !isFullscreen
                     ? 'calc(var(--safe-top, 0px) + 6.8rem)'
                     : '1rem',
               }}
@@ -1087,7 +1336,10 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                   <span>重試</span>
                 </button>
                 <button
-                  onClick={() => setCameraError(null)}
+                  onClick={() => {
+                    cameraErrorRef.current = null;
+                    setCameraError(null);
+                  }}
                   className="px-1.5 py-0.5 rounded-lg text-zinc-400 hover:text-white text-xs cursor-pointer"
                   title="關閉提示"
                 >
@@ -1102,10 +1354,26 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             <div className="absolute inset-0 w-full h-full pointer-events-none bg-[#0A0A0A] overflow-hidden" />
           )}
 
-          {/* Shared Live Video Element (Mirrored, object-fit: cover object-center 居中滿版不變形) */}
+          {/* AI Model Loading Overlay */}
+          {!isLoaded && hasCamera && !cameraError && (
+            <div className="absolute inset-0 flex items-center justify-center z-40 bg-black/85">
+              <div className="flex flex-col items-center dark-glow-card px-6 py-5 rounded-3xl">
+                <div className="relative z-10 flex flex-col items-center">
+                  <div className="w-8 h-8 border-3 border-t-[#28887A] border-r-[#28887A] border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+                  <p className="mt-3 text-white font-semibold text-xs tracking-wider">
+                    載入 MediaPipe 姿態識別中...
+                  </p>
+                  <p className="text-[11px] text-[#4CA6A8] mt-0.5">本地端模組秒速載入中</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Shared Live Video Element (1080p 滿畫質 + CAMERA_ROTATION / MIRROR_VIDEO CSS 轉正與 object-fit: cover) */}
           <video
             ref={videoRef}
-            className="absolute inset-0 w-full h-full object-cover object-center -scale-x-100 pointer-events-none"
+            className="pointer-events-none"
+            style={videoStyle}
             autoPlay
             playsInline
             muted
@@ -1113,7 +1381,13 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
           {/* 1. Mode: 撥開葉子（6 株互動植物槽位分居側邊與底部兩角，全不透明渲染） */}
           {activeMode === 'leaves' && (
-            <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden opacity-100">
+            <div
+              className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
+                isInteractionUnlocked
+                  ? 'opacity-100'
+                  : 'opacity-0 [&_*]:pointer-events-none'
+              }`}
+            >
               {visiblePlants.map((plant) => (
                 <Plant
                   key={plant.id}
@@ -1122,7 +1396,6 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                   invertMirror={false}
                   totalDuration={autoReturnSeconds}
                   requiredWaves={1}
-                  showCountdown={showControls}
                   onPush={handlePushPlant}
                   onReset={handleResetPlant}
                 />
@@ -1130,34 +1403,72 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             </div>
           )}
 
-          {/* 鏡頭辨識層：每一格畫面的更新只重畫這一層，不會整頁重畫 */}
-          <TrackingLayer
-            videoRef={videoRef}
-            activeMode={activeMode}
-            plants={visiblePlants}
-            projection={videoProjection}
-            showLoading={hasCamera && !cameraError}
-            onWaveStroke={handleWaveStroke}
-            onActiveAnimalChange={handleActiveAnimalChange}
-            onActiveLandscapeChange={handleActiveLandscapeChange}
-          />
+          {/* 2. Mode: 動物互動模式 (離屏 180x320 畫布已先轉正與鏡像，直接使用 0.0~1.0 對齊座標) */}
+          {activeMode === 'animal' && (
+            <div
+              className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
+                isInteractionUnlocked ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              <AnimalMode
+                faces={isInteractionUnlocked ? faces : EMPTY_LANDMARKS}
+                poses={isInteractionUnlocked ? poses : EMPTY_LANDMARKS}
+                onActiveAnimalChange={handleActiveAnimalChange}
+              />
+            </div>
+          )}
 
-          {/* 各項互動功能的頂層邊框 (100% 完全實色不透明，無透明度效果)：
+          {/* 3. Mode: 風景手勢模式 (z-50 頂層獨立透明度渲染，含距離提示與第二螢幕同步) */}
+          {activeMode === 'landscape' && (
+            <div
+              className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
+                isInteractionUnlocked ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              <LandscapeMode
+                poses={isInteractionUnlocked ? poses : EMPTY_LANDMARKS}
+                onActiveLandscapeChange={handleActiveLandscapeChange}
+              />
+            </div>
+          )}
+
+          {/* 各項互動功能的頂層邊框 (100% 完全實色不透明)：
               1. 撥開葉子：boarder_top.png, boarder_side_left.png, boarder_side_right.png
-              2. 動物互動：animals_boarder.webp
+              2. 動物互動：animals_boarder.png
               3. 風景手勢：scene_boarder.png */}
           <LeafBorder activeMode={activeMode} />
+
+          {/* 高質感明暗過渡層（覆蓋於主畫面最上層，無 blur、無文字、pointer-events-none） */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 w-full h-full pointer-events-none select-none z-[53]"
+            style={{
+              background: DIM_OVERLAY_GRADIENT,
+              opacity: dimOverlayOpacity,
+              transition: `opacity ${dimTransitionCurve}`,
+              willChange: 'opacity',
+            }}
+          />
         </div>
       </div>
 
       {/* ───────────────────────────────────────────────────────────── */}
-      {/* Child 3：控制與連動測試面板（浮在畫面最下方，測試按鈕可收合）    */}
+      {/* Child 3：控制與連動測試面板                                    */}
+      {/* - 直式 (.is-portrait)：自動錨定至底部安全邊距 (Safe Area)，     */}
+      {/*   預設精簡高度並支援收合測試面板，確保中央互動區域完全不被遮擋     */}
+      {/* - 橫式寬螢幕：停靠於右側控制欄下方                              */}
       {/* ───────────────────────────────────────────────────────────── */}
-      {!immersive && (
+      {!isFullscreen && (
         <div
-          className="flex flex-col items-center gap-1.5 fixed bottom-0 left-0 right-0 z-55 portrait-safe-bottom pointer-events-none"
+          className={`flex flex-col items-center gap-1.5 transition-all duration-300 ${
+            isPortrait
+              ? 'fixed bottom-0 left-0 right-0 z-55 portrait-safe-bottom pointer-events-none'
+              : isWideLandscape
+              ? 'col-start-2 row-start-2 w-full max-h-full overflow-y-auto pr-0.5 z-30 pointer-events-auto'
+              : 'row-start-3 w-full max-w-[440px] z-30 pointer-events-auto'
+          }`}
         >
-          <div className="w-full max-w-[680px] flex flex-col gap-1.5 pointer-events-auto">
+          <div className={`w-full flex flex-col gap-1.5 pointer-events-auto ${isPortrait ? 'max-w-[680px]' : ''}`}>
           {/* 撥開葉子專屬參數抽屜與動作 */}
           {activeMode === 'leaves' && (
             <>
@@ -1224,26 +1535,29 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
           {/* ═══════════════════════════════════════════════════════════ */}
           {/* 展場人員專用：「平板連動測試 (Socket Override)」控制卡片      */}
-          {/* 可收合，避免佔用畫面高度                                      */}
+          {/* 直式模式下可收合，避免佔用畫面高度並維持底部安全留白            */}
           {/* ═══════════════════════════════════════════════════════════ */}
           <div className="w-full dark-glow-card rounded-2xl p-2 sm:p-2.5 border-none shadow-none">
             <div
               className={`flex flex-wrap items-center justify-between gap-1.5 px-1 relative z-10 ${
-                showPortraitOverride ? 'pb-2 border-b border-zinc-800 mb-2' : ''
+                !isPortrait || showPortraitOverride ? 'pb-2 border-b border-zinc-800 mb-2' : ''
               }`}
             >
               <button
                 type="button"
-                onClick={() => setShowPortraitOverride((prev) => !prev)}
-                className="text-[11px] font-medium text-white flex items-center gap-1.5 cursor-pointer"
+                onClick={() => isPortrait && setShowPortraitOverride((prev) => !prev)}
+                className={`text-[11px] font-medium text-white flex items-center gap-1.5 ${
+                  isPortrait ? 'cursor-pointer' : 'cursor-default'
+                }`}
               >
                 <Radio className="w-3.5 h-3.5 text-[#4CA6A8]" />
                 <span>平板連動測試 (Socket Override)</span>
-                {showPortraitOverride ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                ) : (
-                  <ChevronUp className="w-3.5 h-3.5 text-zinc-400" />
-                )}
+                {isPortrait &&
+                  (showPortraitOverride ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                  ) : (
+                    <ChevronUp className="w-3.5 h-3.5 text-zinc-400" />
+                  ))}
               </button>
 
               {/* 分離之專屬看板快速開啟連結 (Board 1, Board 2, Board 3) */}
@@ -1297,7 +1611,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             </div>
 
             {/* 快速手動切換按鈕組 (含測試撥開葉子、動物、山景與待機) - 平面純色膠囊 */}
-            {showPortraitOverride && (
+            {(!isPortrait || showPortraitOverride) && (
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 relative z-10">
                 <button
                   onClick={() => handleManualSyncTest('leaf_parted', 'leaves')}
@@ -1387,7 +1701,11 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             {/* 6 植物卡片清單 */}
             <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 relative z-10">
               <div
-                className="grid gap-4 grid-cols-1 sm:grid-cols-2"
+                className={`grid gap-4 ${
+                  isPortrait
+                    ? 'grid-cols-1 sm:grid-cols-2'
+                    : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3'
+                }`}
               >
                 {currentActivePlants.map((plant) => {
                   const conciseDesc =
