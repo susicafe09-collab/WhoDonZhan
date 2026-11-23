@@ -23,21 +23,14 @@ const isVisibleJoint = (joint: any): boolean => {
   return true;
 };
 
-/** 計算手臂相對於水平線的仰角（度數：正值向上、0 度為水平、負值向下） */
-const armElevationDeg = (shoulder: any, target: any): number => {
-  const dx = Math.abs(target.x - shoulder.x);
-  const dy = shoulder.y - target.y; // Y 向下增加，故 shoulder.y - target.y > 0 表示向上抬起
-  return (Math.atan2(dy, Math.max(0.001, dx)) * 180) / Math.PI;
-};
-
 /**
- * 純上半身風景手勢追蹤 Hook：
- * 嚴格僅依賴肩膀 (11, 12)、手肘 (13, 14) 與手腕 (15, 16) 的相對位置與角度，
- * 完全移除頭部、腰部與下半身點位依賴，適合展場半身或近距離取景。
+ * 山脈（風景手勢）模式上半身偵測 Hook：
+ * 全程以肩寬 `shoulderDist = 距離(11, 12)` 作為動態比例基準，確保遠近站位皆可精準觸發。
+ * 使用關鍵點：鼻子 (0)、雙肩 (11, 12)、雙腕 (15, 16)、雙食指 (19, 20)。
  *
- * 1. Pose 1 (Mountain_type_1): 雙手高舉頭頂拱圓／三角
- * 2. Pose 2 (Mountain_type_2): 雙手水平側平舉 (T-Pose)
- * 3. Pose 3 (Mountain_type_3): 單手高舉指天、另一手置於胸前
+ * 1. Mountain_type_1 (pose_1)：胸前三角形手勢 ▲
+ * 2. Mountain_type_2 (pose_2)：下巴前水平一直線手勢 —
+ * 3. Mountain_type_3 (pose_3)：單手高舉、單手平放的高低錯位手勢（不限左右）
  */
 export const useLandscapeTracking = (poses: any[]): LandscapeTrackingResult => {
   const [lockedScene, setLockedScene] = useState<LandscapePoseType | null>(null);
@@ -54,9 +47,9 @@ export const useLandscapeTracking = (poses: any[]): LandscapeTrackingResult => {
   const fadingOutPoseRef = useRef<LandscapePoseType | null>(null);
   const fadeOutStartTimeRef = useRef<number>(0);
 
-  const REQUIRED_HOLD_TIME_MS = 850; // 穩定維持 0.85 秒防誤觸
+  const REQUIRED_HOLD_TIME_MS = 500; // 穩定保持 0.5 秒（0.4～0.6s 區間），防舉手經過誤觸
   const GRACE_PERIOD_MS = 800; // 離開姿勢 0.8 秒內維持顯示
-  const FADE_OUT_DURATION_MS = 700; // 舊圖淡出時間 (對應 CSS 0.7s)
+  const FADE_OUT_DURATION_MS = 700; // 舊圖淡出時間（對應 CSS 0.7s）
 
   useEffect(() => {
     const now = performance.now();
@@ -73,133 +66,108 @@ export const useLandscapeTracking = (poses: any[]): LandscapeTrackingResult => {
         const pose = poses[i];
         if (!pose) continue;
 
-        // 嚴格僅讀取純上半身關鍵點：肩膀 (11, 12)、手肘 (13, 14)、手腕 (15, 16)
+        // 讀取指定上半身關鍵點：鼻子 (0)、雙肩 (11, 12)、雙腕 (15, 16)、雙食指 (19, 20)
+        const nose = pose[0];
         const lShoulder = pose[11];
         const rShoulder = pose[12];
-        const lElbow = pose[13];
-        const rElbow = pose[14];
         const lWrist = pose[15];
         const rWrist = pose[16];
+        const lIndex = pose[19];
+        const rIndex = pose[20];
 
         if (!isVisibleJoint(lShoulder) || !isVisibleJoint(rShoulder)) {
           continue;
         }
 
-        const hasLElbow = isVisibleJoint(lElbow);
-        const hasRElbow = isVisibleJoint(rElbow);
         const hasLWrist = isVisibleJoint(lWrist);
         const hasRWrist = isVisibleJoint(rWrist);
+        const hasLIndex = isVisibleJoint(lIndex);
+        const hasRIndex = isVisibleJoint(rIndex);
 
-        if (!hasLElbow && !hasRElbow && !hasLWrist && !hasRWrist) {
+        if (!hasLWrist || !hasRWrist) {
           continue;
         }
 
         foundValidUpperBody = true;
 
-        // 以雙肩寬度作為等比縮放基準單位（完全不依賴腰部／下半身）
-        const unit = Math.max(
-          0.08,
+        // 肩寬作為全程比例基準（遠近站位自適應）
+        const shoulderDist = Math.max(
+          0.06,
           Math.hypot(lShoulder.x - rShoulder.x, lShoulder.y - rShoulder.y)
         );
-        const shoulderMidY = (lShoulder.y + rShoulder.y) * 0.5;
-        const wristDistX = hasLWrist && hasRWrist ? Math.abs(lWrist.x - rWrist.x) : 0;
-        const elbowDistX = hasLElbow && hasRElbow ? Math.abs(lElbow.x - rElbow.x) : 0;
+        const shoulderAvgY = (lShoulder.y + rShoulder.y) * 0.5;
+        const shoulderCenterX = (lShoulder.x + rShoulder.x) * 0.5;
+        const noseY = isVisibleJoint(nose) ? nose.y : shoulderAvgY - 0.45 * shoulderDist;
+
+        const wristDistX = Math.abs(lWrist.x - rWrist.x);
+        const wristDiffY = Math.abs(lWrist.y - rWrist.y);
+        const avgWristY = (lWrist.y + rWrist.y) * 0.5;
+        const minWristY = Math.min(lWrist.y, rWrist.y);
+        const maxWristY = Math.max(lWrist.y, rWrist.y);
+
+        const hasBothIndices = hasLIndex && hasRIndex;
+        const indexDist = hasBothIndices
+          ? Math.hypot(lIndex.x - rIndex.x, lIndex.y - rIndex.y)
+          : Infinity;
+        const indexDistX = hasBothIndices
+          ? Math.abs(lIndex.x - rIndex.x)
+          : wristDistX;
+        const avgIndexY = hasBothIndices ? (lIndex.y + rIndex.y) * 0.5 : avgWristY;
+        const avgHandX = hasBothIndices
+          ? (lIndex.x + rIndex.x) * 0.5
+          : (lWrist.x + rWrist.x) * 0.5;
+        const avgHandY = (avgIndexY + avgWristY) * 0.5;
+
+        const fingertipsTouching = hasBothIndices && indexDist < 0.35 * shoulderDist;
+        const wristsRoughlyLevel = wristDiffY < 0.25 * shoulderDist;
+        const handsNearMidline = Math.abs(avgHandX - shoulderCenterX) < 0.65 * shoulderDist;
 
         /* ─────────────────────────────────────────────────────────────
-         * 1. Pose 1 (Mountain_type_1): 雙手高舉頭頂拱圓／三角
-         *    純以上半身肩膀、手肘與手腕高度與相對距離判定
+         * 1. Mountain_type_1 (pose_1)：胸前三角形手勢 ▲
+         *    - 指尖相觸：dist(19, 20) < 0.35 * shoulderDist
+         *    - 形成斜角：avgWristY - avgIndexY > 0.15 * shoulderDist 且 |x15 - x16| > |x19 - x20|
+         *    - 位置高度：胸前中線附近、avgIndexY > noseY、雙腕大致水平
          * ───────────────────────────────────────────────────────────── */
-        const bothWristsHighAndClose =
-          hasLWrist &&
-          hasRWrist &&
-          lWrist.y < lShoulder.y - 0.5 * unit &&
-          rWrist.y < rShoulder.y - 0.5 * unit &&
-          wristDistX < 1.45 * unit;
-
-        const bothElbowsRaised =
-          hasLElbow &&
-          hasRElbow &&
-          lElbow.y < lShoulder.y - 0.05 * unit &&
-          rElbow.y < rShoulder.y - 0.05 * unit &&
-          armElevationDeg(lShoulder, lElbow) > 15 &&
-          armElevationDeg(rShoulder, rElbow) > 15;
-
-        const wristsNotWide =
-          !hasLWrist || !hasRWrist ? true : wristDistX < 1.9 * unit;
-
-        const isPose1 = bothWristsHighAndClose || (bothElbowsRaised && wristsNotWide);
+        const isPose1 =
+          fingertipsTouching &&
+          avgWristY - avgIndexY > 0.15 * shoulderDist &&
+          wristDistX > indexDistX &&
+          handsNearMidline &&
+          avgIndexY > noseY &&
+          wristsRoughlyLevel;
 
         /* ─────────────────────────────────────────────────────────────
-         * 2. Pose 2 (Mountain_type_2): 雙手側平舉 T-Pose
-         *    雙側上臂（肩→肘）接近水平（仰角 ±26° 內）且雙肘明顯向外展開
+         * 2. Mountain_type_2 (pose_2)：下巴前水平一直線手勢 —
+         *    - 指尖相觸：dist(19, 20) < 0.35 * shoulderDist
+         *    - 保持水平：|avgWristY - avgIndexY| < 0.15 * shoulderDist
+         *      且 |x15 - x16| > 0.6 * shoulderDist、雙腕大致水平
+         *    - 位置高度：介於鼻子 (0) 與肩膀中點高度之間
          * ───────────────────────────────────────────────────────────── */
-        const elbowsLevelAndWide =
-          hasLElbow &&
-          hasRElbow &&
-          Math.abs(lElbow.y - lShoulder.y) < 0.3 * unit &&
-          Math.abs(rElbow.y - rShoulder.y) < 0.3 * unit &&
-          Math.abs(armElevationDeg(lShoulder, lElbow)) < 26 &&
-          Math.abs(armElevationDeg(rShoulder, rElbow)) < 26 &&
-          elbowDistX > 1.55 * unit;
-
-        const wristsAlignedHorizontal =
-          !hasLWrist || !hasRWrist
-            ? true
-            : Math.abs(lWrist.y - lShoulder.y) < 0.5 * unit &&
-              Math.abs(rWrist.y - rShoulder.y) < 0.5 * unit &&
-              wristDistX > 1.85 * unit;
-
-        const isPose2 = !isPose1 && elbowsLevelAndWide && wristsAlignedHorizontal;
+        const isPose2 =
+          !isPose1 &&
+          fingertipsTouching &&
+          Math.abs(avgWristY - avgIndexY) < 0.15 * shoulderDist &&
+          wristDistX > 0.6 * shoulderDist &&
+          wristsRoughlyLevel &&
+          handsNearMidline &&
+          avgHandY > noseY &&
+          avgHandY < shoulderAvgY;
 
         /* ─────────────────────────────────────────────────────────────
-         * 3. Pose 3 (Mountain_type_3): 單手高舉指天、另一手置於胸前
-         *    純依據雙肩與手肘／手腕的相對仰角與高低差判定（支援左右鏡像自然舉手）
+         * 3. Mountain_type_3 (pose_3)：單手高舉、單手平放的高低錯位手勢（不限左右）
+         *    - 雙手分開：|x19 - x20| > 0.5 * shoulderDist（且手腕不併攏於中線）
+         *    - 顯著高低差：|y15 - y16| > 0.65 * shoulderDist
+         *    - 較高手腕高於鼻子：min(y15, y16) < noseY
+         *    - 較低手腕於肩膀附近或略低：max(y15, y16) > shoulderAvgY - 0.15 * shoulderDist
          * ───────────────────────────────────────────────────────────── */
-        const isArmRaisedHigh = (
-          shoulder: any,
-          elbow: any,
-          wrist: any,
-          hasE: boolean,
-          hasW: boolean
-        ) => {
-          const wristHigh =
-            hasW && wrist.y < shoulder.y - 0.35 * unit && armElevationDeg(shoulder, wrist) > 30;
-          const elbowHigh =
-            hasE && elbow.y < shoulder.y - 0.05 * unit && armElevationDeg(shoulder, elbow) > 18;
-          return wristHigh || elbowHigh;
-        };
-
-        const isArmChestLevel = (
-          shoulder: any,
-          elbow: any,
-          wrist: any,
-          hasE: boolean,
-          hasW: boolean
-        ) => {
-          const refY = hasW ? wrist.y : hasE ? elbow.y : shoulderMidY + 2 * unit;
-          // 位於肩線附近至胸口下方範圍內（完全以肩寬 unit 推算，不參考腰部點位）
-          return refY > shoulder.y - 0.1 * unit && refY < shoulder.y + 1.25 * unit;
-        };
-
-        const rightHigh = isArmRaisedHigh(rShoulder, rElbow, rWrist, hasRElbow, hasRWrist);
-        const leftHigh = isArmRaisedHigh(lShoulder, lElbow, lWrist, hasLElbow, hasLWrist);
-
-        const leftRefY = hasLWrist ? lWrist.y : hasLElbow ? lElbow.y : shoulderMidY + unit;
-        const rightRefY = hasRWrist ? rWrist.y : hasRElbow ? rElbow.y : shoulderMidY + unit;
-
-        const rightHighLeftChest =
-          rightHigh &&
-          !leftHigh &&
-          isArmChestLevel(lShoulder, lElbow, lWrist, hasLElbow, hasLWrist) &&
-          leftRefY - rightRefY > 0.35 * unit;
-
-        const leftHighRightChest =
-          leftHigh &&
-          !rightHigh &&
-          isArmChestLevel(rShoulder, rElbow, rWrist, hasRElbow, hasRWrist) &&
-          rightRefY - leftRefY > 0.35 * unit;
-
-        const isPose3 = !isPose1 && !isPose2 && (rightHighLeftChest || leftHighRightChest);
+        const isPose3 =
+          !isPose1 &&
+          !isPose2 &&
+          indexDistX > 0.5 * shoulderDist &&
+          wristDistX > 0.35 * shoulderDist &&
+          wristDiffY > 0.65 * shoulderDist &&
+          minWristY < noseY &&
+          maxWristY > shoulderAvgY - 0.15 * shoulderDist;
 
         if (isPose1) {
           currentRawPose = 'pose_1';

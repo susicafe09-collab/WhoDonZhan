@@ -37,7 +37,7 @@ export interface MuzhaPlantDetail {
  * 精簡景點介紹（自動由 bioData.ts 衍生，修改文字請直接編輯 src/data/bioData.ts）
  */
 export const CONCISE_PLANT_DESCRIPTIONS: Record<string, string> = Object.fromEntries(
-  BIO_PLANTS.map((plant) => [plant.imageSrc, plant.conciseDescription])
+  BIO_PLANTS.map((plant) => [plant.imageSrc, plant.conciseDescription || ''])
 );
 
 /**
@@ -51,12 +51,12 @@ export const MUZHA_PLANTS_DATA: Record<string, MuzhaPlantDetail> = Object.fromEn
       name: plant.name,
       scientificName: plant.scientificName,
       category: plant.category,
-      categoryLabel: plant.categoryLabel,
-      muzhaSpot: plant.muzhaSpot,
-      muzhaRelation: plant.muzhaRelation,
-      description: plant.description,
-      funFact: plant.funFact,
-      tags: plant.tags,
+      categoryLabel: plant.categoryLabel || '',
+      muzhaSpot: plant.muzhaSpot || '',
+      muzhaRelation: plant.muzhaRelation || '',
+      description: plant.description || '',
+      funFact: plant.funFact || '',
+      tags: plant.tags || [],
     },
   ])
 );
@@ -68,13 +68,13 @@ export const ALL_MUZHA_PLANTS_LIST: MuzhaPlantInfo[] = BIO_PLANTS.map((plant) =>
   id: plant.id,
   name: plant.name,
   scientificName: plant.scientificName,
-  categoryLabel: plant.categoryLabel,
+  categoryLabel: plant.categoryLabel || '',
   imageSrc: plant.imageSrc,
-  muzhaSpot: plant.muzhaSpot,
-  tags: plant.tags,
-  muzhaRelation: plant.muzhaRelation,
-  description: plant.description,
-  funFact: plant.funFact,
+  muzhaSpot: plant.muzhaSpot || '',
+  tags: plant.tags || [],
+  muzhaRelation: plant.muzhaRelation || '',
+  description: plant.description || '',
+  funFact: plant.funFact || '',
 }));
 
 /**
@@ -96,5 +96,13 @@ export const BOTTOM_PLANT_POOLS = BIO_PLANTS.filter((p) => p.category === 'botto
  * 展場專屬知識資料字典（自動由 bioData.ts 衍生：葉片總覽 + 5 種動物 + 3 種山景）
  */
 export const KNOWLEDGE_DICTIONARY: Record<string, KnowledgeItem> = Object.fromEntries(
-  [BIO_LEAVES_SUMMARY, ...BIO_ANIMALS, ...BIO_LANDSCAPES].map((entry) => [entry.id, entry])
+  [BIO_LEAVES_SUMMARY, ...BIO_ANIMALS, ...BIO_LANDSCAPES].map((entry) => [
+    entry.id,
+    {
+      ...entry,
+      tag: entry.tag || '',
+      description: entry.description || '',
+      funFact: entry.funFact || '',
+    },
+  ])
 );
