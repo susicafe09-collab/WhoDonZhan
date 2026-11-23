@@ -135,6 +135,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   // Camera stream refs & state
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraStartingRef = useRef(false);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [hasCamera, setHasCamera] = useState(false);
@@ -991,6 +992,8 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
   // Start / Maintain Camera (維持請求 1920x1080 Full HD 滿畫質)
   const startCamera = useCallback(async () => {
+    if (cameraStartingRef.current) return;
+    cameraStartingRef.current = true;
     if (cameraErrorRef.current !== null) {
       cameraErrorRef.current = null;
       setCameraError(null);
@@ -1034,6 +1037,8 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
       cameraErrorRef.current = errMsg;
       setCameraError(errMsg);
       setHasCamera(false);
+    } finally {
+      cameraStartingRef.current = false;
     }
   }, [recalcStageSize]);
 
@@ -1045,6 +1050,19 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
         streamRef.current.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       }
+    };
+  }, [startCamera]);
+
+  // 鏡頭被拔掉、斷線或開機時沒抓到：每 3 秒檢查一次，插回去就自己接上，不用重新整理網頁
+  useEffect(() => {
+    const reconnect = () => {
+      if (!streamRef.current?.active) startCamera();
+    };
+    const timer = window.setInterval(reconnect, 3000);
+    navigator.mediaDevices?.addEventListener?.('devicechange', reconnect);
+    return () => {
+      window.clearInterval(timer);
+      navigator.mediaDevices?.removeEventListener?.('devicechange', reconnect);
     };
   }, [startCamera]);
 
