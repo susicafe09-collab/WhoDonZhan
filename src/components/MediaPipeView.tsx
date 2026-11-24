@@ -58,8 +58,8 @@ const ACTIVE_X_MIN = 0.15; // ACTIVE / COOLDOWN 放寬水平左邊界
 const ACTIVE_X_MAX = 0.85; // ACTIVE / COOLDOWN 放寬水平右邊界
 const MIN_SHOULDER_WIDTH = 0.15; // 距離門檻：雙肩寬度比例 >= 0.15
 const MIN_SHOULDER_VISIBILITY = 0.3; // 肩膀關鍵點最低可見度
-const DETECTING_DURATION_MS = 3000; // 進場確認計時 (3 秒)
-const DETECTING_LOSS_TOLERANCE_MS = 500; // DETECTING 期間瞬間漏偵測容忍時間 (500ms)
+const DETECTING_DURATION_MS = 1000; // 進場確認計時 (1 秒；原本 3 秒，觀眾覺得太久)
+const DETECTING_LOSS_TOLERANCE_MS = 1000; // DETECTING 期間漏偵測容忍時間 (1 秒；原本 0.5 秒，樹莓派偶爾漏認一下就重來)
 const COOLDOWN_DURATION_MS = 2500; // 離場緩衝計時 (2.5 秒)
 const PRESENCE_TICK_MS = 100; // 狀態機計時檢查間隔
 const EMPTY_LANDMARKS: any[] = []; // 停用互動時傳入的穩定空陣列，避免不必要 re-render
