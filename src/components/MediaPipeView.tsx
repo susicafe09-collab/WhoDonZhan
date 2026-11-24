@@ -120,6 +120,107 @@ const hasValidPresencePerson = (
   return false;
 };
 
+interface TrackingLayerProps {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  activeMode: UnifiedMode;
+  cameraRotation: CameraRotationDeg;
+  stageWidth: number;
+  stageHeight: number;
+  isInteractionUnlocked: boolean;
+  plants: PlantItem[];
+  waveDistance: number;
+  onPoses: (poses: any[]) => void;
+  onLoadedChange: (loaded: boolean) => void;
+  onWaveStroke: (plantId: string) => void;
+  onHandActive?: (points: HandPoint[]) => void;
+  onActiveAnimalChange: (target: string | null) => void;
+  onActiveLandscapeChange: (target: string | null) => void;
+}
+
+/**
+ * 鏡頭辨識層：MediaPipe 每一格都會更新 poses/faces。
+ * 把它們關在這個小元件裡，每格只重畫這裡，外面 1700 多行的主畫面和面板不跟著重畫。
+ */
+const TrackingLayer = React.memo(function TrackingLayer({
+  videoRef,
+  activeMode,
+  cameraRotation,
+  stageWidth,
+  stageHeight,
+  isInteractionUnlocked,
+  plants,
+  waveDistance,
+  onPoses,
+  onLoadedChange,
+  onWaveStroke,
+  onHandActive,
+  onActiveAnimalChange,
+  onActiveLandscapeChange,
+}: TrackingLayerProps) {
+  // MediaPipe AI Vision（離屏畫布先轉正再偵測 + Lite 模型 + 10~12 FPS 節流 + 依模式門控）
+  const { faces, poses, isLoaded } = useMediaPipe(videoRef, {
+    activeMode,
+    cameraRotation,
+    mirrorVideo: MIRROR_VIDEO,
+    isPortrait: true, // 舞台固定是 9:16 直立畫面
+    stageWidth,
+    stageHeight,
+    isInteractionUnlocked,
+  });
+
+  useEffect(() => {
+    onPoses(poses);
+  }, [poses, onPoses]);
+
+  useEffect(() => {
+    onLoadedChange(isLoaded);
+  }, [isLoaded, onLoadedChange]);
+
+  // 撥葉子手勢偵測（座標已由離屏畫布對齊螢幕）
+  useLeafHandTracking({
+    poses: isInteractionUnlocked ? poses : EMPTY_LANDMARKS,
+    plants,
+    enabled: activeMode === 'leaves' && isInteractionUnlocked,
+    requiredWaveCount: 1,
+    waveDistance,
+    onWaveStroke,
+    onHandActive,
+  });
+
+  return (
+    <>
+      {/* 2. Mode: 動物互動模式 (離屏畫布已先轉正與鏡像，直接使用 0.0~1.0 對齊座標) */}
+      {activeMode === 'animal' && (
+        <div
+          className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
+            isInteractionUnlocked ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <AnimalMode
+            faces={isInteractionUnlocked ? faces : EMPTY_LANDMARKS}
+            poses={isInteractionUnlocked ? poses : EMPTY_LANDMARKS}
+            onActiveAnimalChange={onActiveAnimalChange}
+          />
+        </div>
+      )}
+
+      {/* 3. Mode: 風景手勢模式 (含距離提示與第二螢幕同步) */}
+      {activeMode === 'landscape' && (
+        <div
+          className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
+            isInteractionUnlocked ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          <LandscapeMode
+            poses={isInteractionUnlocked ? poses : EMPTY_LANDMARKS}
+            onActiveLandscapeChange={onActiveLandscapeChange}
+          />
+        </div>
+      )}
+    </>
+  );
+});
+
 interface MediaPipeViewProps {
   initialMode?: UnifiedMode;
 }
@@ -206,19 +307,9 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   // 依 CAMERA_ROTATION (0 / 90 / -90) 同步套用至 <video> 與離屏偵測畫布
   const effectiveCameraRotation = CAMERA_ROTATION as CameraRotationDeg;
 
-  // MediaPipe AI Vision（離屏 180x320 先轉正再偵測 + Lite 模型 + 10~12 FPS 節流 + 依模式門控）
-  const { faces, poses, isLoaded } = useMediaPipe(videoRef, {
-    activeMode,
-    cameraRotation: effectiveCameraRotation,
-    mirrorVideo: MIRROR_VIDEO,
-    isPortrait: true, // 舞台固定是 9:16 直立畫面
-    stageWidth: stageSize.width,
-    stageHeight: stageSize.height,
-    isInteractionUnlocked,
-  });
-
-  const latestPosesRef = useRef<any[]>(poses);
-  latestPosesRef.current = poses;
+  // 鏡頭辨識在 <TrackingLayer> 裡跑；這裡只收「載入好了沒」跟最新骨架（存在 ref，不觸發整頁重畫）
+  const [isLoaded, setIsLoaded] = useState(false);
+  const latestPosesRef = useRef<any[]>([]);
 
   const detectingStartAtRef = useRef<number | null>(null);
   const lastValidSeenAtRef = useRef<number | null>(null);
@@ -312,10 +403,14 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     }
   }, [commitPresenceState]);
 
-  // 每次骨架更新即時判定（不額外觸發 re-render）
-  useEffect(() => {
-    evaluatePresenceState();
-  }, [poses, evaluatePresenceState]);
+  // 每次骨架更新即時判定（由 TrackingLayer 每格呼叫，不觸發整頁重畫）
+  const handlePoses = useCallback(
+    (nextPoses: any[]) => {
+      latestPosesRef.current = nextPoses;
+      evaluatePresenceState();
+    },
+    [evaluatePresenceState]
+  );
 
   // 僅在 DETECTING / COOLDOWN 期間啟動計時檢查，確保離場無新幀時仍準確超時
   useEffect(() => {
@@ -762,17 +857,6 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     },
     [autoReturnSeconds, soundEnabled]
   );
-
-  // Hook for strict hand-only tracking (15, 16, 19, 20; 座標已由離屏畫布對齊螢幕)
-  useLeafHandTracking({
-    poses: isInteractionUnlocked ? poses : EMPTY_LANDMARKS,
-    plants: visiblePlants,
-    enabled: activeMode === 'leaves' && isInteractionUnlocked,
-    requiredWaveCount: 1,
-    waveDistance,
-    onWaveStroke: handleWaveStroke,
-    onHandActive: SHOW_LEAF_DEBUG ? setDebugHands : undefined,
-  });
 
   // Push / Part a plant directly (click/touch fallback)
   const handlePushPlant = useCallback(
@@ -1376,34 +1460,23 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             </div>
           )}
 
-          {/* 2. Mode: 動物互動模式 (離屏 180x320 畫布已先轉正與鏡像，直接使用 0.0~1.0 對齊座標) */}
-          {activeMode === 'animal' && (
-            <div
-              className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
-                isInteractionUnlocked ? 'opacity-100' : 'opacity-0'
-              }`}
-            >
-              <AnimalMode
-                faces={isInteractionUnlocked ? faces : EMPTY_LANDMARKS}
-                poses={isInteractionUnlocked ? poses : EMPTY_LANDMARKS}
-                onActiveAnimalChange={handleActiveAnimalChange}
-              />
-            </div>
-          )}
-
-          {/* 3. Mode: 風景手勢模式 (z-50 頂層獨立透明度渲染，含距離提示與第二螢幕同步) */}
-          {activeMode === 'landscape' && (
-            <div
-              className={`absolute inset-0 pointer-events-none z-30 overflow-hidden transition-opacity duration-700 ease-in-out ${
-                isInteractionUnlocked ? 'opacity-100' : 'opacity-0'
-              }`}
-            >
-              <LandscapeMode
-                poses={isInteractionUnlocked ? poses : EMPTY_LANDMARKS}
-                onActiveLandscapeChange={handleActiveLandscapeChange}
-              />
-            </div>
-          )}
+          {/* 鏡頭辨識層：每一格畫面的更新只重畫這一層，不會整頁重畫 */}
+          <TrackingLayer
+            videoRef={videoRef}
+            activeMode={activeMode}
+            cameraRotation={effectiveCameraRotation}
+            stageWidth={stageSize.width}
+            stageHeight={stageSize.height}
+            isInteractionUnlocked={isInteractionUnlocked}
+            plants={visiblePlants}
+            waveDistance={waveDistance}
+            onPoses={handlePoses}
+            onLoadedChange={setIsLoaded}
+            onWaveStroke={handleWaveStroke}
+            onHandActive={SHOW_LEAF_DEBUG ? setDebugHands : undefined}
+            onActiveAnimalChange={handleActiveAnimalChange}
+            onActiveLandscapeChange={handleActiveLandscapeChange}
+          />
 
           {/* 各項互動功能的頂層邊框 (100% 完全實色不透明)：
               1. 撥開葉子：boarder_top.png, boarder_side_left.png, boarder_side_right.png
