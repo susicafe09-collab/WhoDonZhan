@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useMediaPipe, CameraRotationDeg } from '../hooks/useMediaPipe';
-import { useLeafHandTracking } from '../hooks/useLeafHandTracking';
+import {
+  useLeafHandTracking,
+  HandPoint,
+  DEFAULT_WAVE_DISTANCE,
+  plantZone,
+} from '../hooks/useLeafHandTracking';
 import { useScreenRatio } from '../hooks/useScreenRatio';
 import AnimalMode from './AnimalMode';
 import LandscapeMode from './LandscapeMode';
@@ -46,6 +51,9 @@ export type UnifiedMode = 'leaves' | 'animal' | 'landscape';
 // ─────────────────────────────────────────────────────────────
 export const CAMERA_ROTATION: CameraRotationDeg = 0;
 export const MIRROR_VIDEO = true;
+
+// 網址加 &debug 時，撥葉子畫面顯示每隻手被認到的位置（圓點）和每株植物的觸發範圍（細框）
+const SHOW_LEAF_DEBUG = new URLSearchParams(window.location.search).has('debug');
 
 // ─────────────────────────────────────────────────────────────
 // 進場 3 秒防誤觸狀態機 — 可微調常數設定
@@ -180,6 +188,9 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   // Sound and settings
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoReturnSeconds, setAutoReturnSeconds] = useState<number>(10); // 預設 10 秒自動復原
+  // 撥葉靈敏度：手要揮多遠才撥開（畫面高度比例），越小越靈敏；現場調好再寫回預設值
+  const [waveDistance, setWaveDistance] = useState<number>(DEFAULT_WAVE_DISTANCE);
+  const [debugHands, setDebugHands] = useState<HandPoint[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showPlantInfoModal, setShowPlantInfoModal] = useState(false);
 
@@ -759,7 +770,9 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     plants: visiblePlants,
     enabled: activeMode === 'leaves' && isInteractionUnlocked,
     requiredWaveCount: 1,
+    waveDistance,
     onWaveStroke: handleWaveStroke,
+    onHandActive: SHOW_LEAF_DEBUG ? setDebugHands : undefined,
   });
 
   // Push / Part a plant directly (click/touch fallback)
@@ -1456,6 +1469,33 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
               3. 風景手勢：scene_boarder.png */}
           <LeafBorder activeMode={activeMode} />
 
+          {SHOW_LEAF_DEBUG && activeMode === 'leaves' && (
+            <div className="absolute inset-0 z-[60] pointer-events-none">
+              {visiblePlants.map((plant) => {
+                const z = plantZone(plant);
+                return (
+                  <div
+                    key={plant.id}
+                    className={`absolute border ${plant.isPushed ? 'border-zinc-500/40' : 'border-[#7BE0DC]/70'}`}
+                    style={{
+                      left: `${z.x1 * 100}%`,
+                      top: `${z.y1 * 100}%`,
+                      width: `${(z.x2 - z.x1) * 100}%`,
+                      height: `${(z.y2 - z.y1) * 100}%`,
+                    }}
+                  />
+                );
+              })}
+              {debugHands.map((h) => (
+                <div
+                  key={h.id}
+                  className="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full border-2 border-white bg-[#F28B82]"
+                  style={{ left: `${h.x}%`, top: `${h.y}%` }}
+                />
+              ))}
+            </div>
+          )}
+
           {/* 高質感明暗過渡層（覆蓋於主畫面最上層，無 blur、無文字、pointer-events-none） */}
           <div
             aria-hidden="true"
@@ -1516,6 +1556,21 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                       </button>
                     ))}
                   </div>
+                  <div className="flex items-center justify-between pt-2 mt-2 border-t border-zinc-800 relative z-10">
+                    <span className="text-xs font-medium text-white">撥葉靈敏度（揮多遠才撥開）</span>
+                    <span className="text-[#D99B43] font-mono font-medium">
+                      {Math.round(waveDistance * 100)}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.05}
+                    max={0.35}
+                    step={0.01}
+                    value={waveDistance}
+                    onChange={(e) => setWaveDistance(Number(e.target.value))}
+                    className="w-full mt-1 accent-[#4CA6A8] relative z-10"
+                  />
                 </div>
               )}
 

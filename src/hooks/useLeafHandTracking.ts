@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { PlantItem } from '../types';
 
-interface HandPoint {
+export interface HandPoint {
   x: number; // visual screen percentage (0 - 100)
   y: number; // visual screen percentage (0 - 100)
   hand: 'left' | 'right';
@@ -13,69 +13,100 @@ interface UseLeafHandTrackingParams {
   plants: PlantItem[];
   enabled: boolean;
   requiredWaveCount: number;
+  /** 手要揮多遠才撥開（畫面高度的比例，0.15 = 15%），越小越靈敏 */
+  waveDistance?: number;
   onWaveStroke: (plantId: string) => void;
   onHandActive?: (points: HandPoint[]) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 植物互動靈敏度參數（座標已由離屏迷你畫布預先轉正與鏡像，直接為 0.0~1.0 螢幕座標）
+// 可微調參數（座標已由離屏畫布轉正與鏡像，0.0~1.0 = 螢幕位置）
 // ─────────────────────────────────────────────────────────────────────────────
-const STRICT_HAND_LANDMARKS: ReadonlyArray<{
-  index: 15 | 16 | 19 | 20;
-  hand: 'left' | 'right';
-  suffix: string;
-}> = [
-  { index: 15, hand: 'left', suffix: 'lw' }, // 左手腕
-  { index: 16, hand: 'right', suffix: 'rw' }, // 右手腕
-  { index: 19, hand: 'left', suffix: 'li' }, // 左手掌／食指根部
-  { index: 20, hand: 'right', suffix: 'ri' }, // 右手掌／食指根部
+export const DEFAULT_WAVE_DISTANCE = 0.15; // 0.5 秒內在植物附近累積揮過畫面高度 15% 才算
+const MIN_HAND_VISIBILITY = 0.5; // 模型自己也沒把握的點不算（原本 0.2）
+const SMOOTH_TAU_MS = 80; // 手的位置平滑，濾掉辨識抖動
+const WAVE_WINDOW_MS = 500; // 只看最近 0.5 秒的揮動
+const JUMP_RESET = 0.2; // 一格內跳超過畫面 20% = 認錯人，重來
+const REARM_MS = 600; // 撥開或歸位後 0.6 秒內不重複觸發
+const ZONE_MARGIN = 0.08; // 植物外圍多留 8% 當觸發範圍
+const STAGE_ASPECT = 9 / 16; // 舞台寬高比：把左右移動換算成跟上下同一把尺
+
+// 一隻手只算一個點：手腕和手尖端的中間
+const HANDS = [
+  { hand: 'left' as const, wrist: 15, tip: 19 },
+  { hand: 'right' as const, wrist: 16, tip: 20 },
 ];
 
-const MIN_HAND_VISIBILITY = 0.2;
-const MIN_WAVE_SPEED = 0.055; // 降低揮動速度門檻，提升撥葉靈敏度
-const MIN_FRAME_DISPLACEMENT = 0.014; // 單幀最小位移（約 1.4% 畫面寬高即可靈敏觸發）
-const TRIGGER_DEBOUNCE_MS = 350; // 單株植物防重複觸發間隔
+/** 植物在螢幕上的範圍（跟 Plant.tsx 的擺放位置一致）＋外圍 8% */
+export const plantZone = (plant: PlantItem) => {
+  const offset = (plant.horizontalOffsetPercent ?? -5) / 100;
+  const isLeft = plant.side === 'left';
+  const isBottom = plant.positionType === 'bottom';
+  const w = isBottom ? 0.42 : 0.35;
+  const h = isBottom ? 0.29 : 0.21;
+  const top = isBottom ? 1 - h : (plant.topPercent ?? 20) / 100;
+  const left = isLeft ? offset : 1 - offset - w;
+  return {
+    x1: left - ZONE_MARGIN,
+    x2: left + w + ZONE_MARGIN,
+    y1: top - ZONE_MARGIN,
+    y2: top + h + ZONE_MARGIN,
+  };
+};
 
-// 放大手部觸發半徑，讓揮手撥開更直覺順手
-const BOTTOM_TRIGGER_MIN_Y = 0.48;
-const BOTTOM_LEFT_MAX_X = 0.52;
-const BOTTOM_RIGHT_MIN_X = 0.48;
-const SIDE_TRIGGER_RADIUS_Y = 0.24;
-const SIDE_LEFT_MAX_X = 0.48;
-const SIDE_RIGHT_MIN_X = 0.52;
+type Sample = { t: number; x: number; y: number };
+type Track = { x: number; y: number; t: number; samples: Sample[] };
+
+const readHand = (pose: any, wristId: number, tipId: number) => {
+  const ok = (p: any) =>
+    p && !(typeof p.visibility === 'number' && p.visibility < MIN_HAND_VISIBILITY);
+  const w = pose[wristId];
+  const t = pose[tipId];
+  if (ok(w) && ok(t)) return { x: (w.x + t.x) / 2, y: (w.y + t.y) / 2 };
+  if (ok(w)) return { x: w.x, y: w.y };
+  return null;
+};
 
 /**
- * Hand-Only Wave & Push Tracker for Leaf Parting ("撥開葉子")
- * 嚴格限定僅追蹤手部點位：Pose 模型左右手腕 (15, 16) 與左右手掌 (19, 20)，
- * 完全排除頭部與軀幹點位 (0~12)，避免觀眾走過或點頭誤觸植物。
+ * 撥開葉子：手要真的在植物附近揮過一段距離才算。
+ * 手放著不動只有細小抖動 → 平滑後累積不到門檻 → 不會誤觸。
  */
 export const useLeafHandTracking = ({
   poses,
   plants,
   enabled,
   requiredWaveCount: _requiredWaveCount,
+  waveDistance = DEFAULT_WAVE_DISTANCE,
   onWaveStroke,
   onHandActive,
 }: UseLeafHandTrackingParams) => {
-  const prevHandsRef = useRef<{
-    [key: string]: { x: number; y: number; time: number };
-  }>({});
-
-  const lastTriggerTimeRef = useRef<{ [plantId: string]: number }>({});
+  const tracksRef = useRef<Record<string, Track>>({});
+  // 每株植物「從這個時間之後的揮動才算」：撥開／歸位時更新，手停在原地不會馬上又撥開
+  const armedAtRef = useRef<Record<string, number>>({});
+  const wasPushedRef = useRef<Record<string, boolean>>({});
 
   const plantsRef = useRef<PlantItem[]>(plants);
   plantsRef.current = plants;
-
+  const waveDistanceRef = useRef(waveDistance);
+  waveDistanceRef.current = waveDistance;
   const onWaveStrokeRef = useRef(onWaveStroke);
   onWaveStrokeRef.current = onWaveStroke;
-
   const onHandActiveRef = useRef(onHandActive);
   onHandActiveRef.current = onHandActive;
-
-  const hadActiveHandsRef = useRef<boolean>(false);
+  const hadActiveHandsRef = useRef(false);
 
   useEffect(() => {
+    const now = performance.now();
+
+    // 植物歸位的那一刻重新上膛
+    for (const plant of plantsRef.current) {
+      const was = wasPushedRef.current[plant.id] ?? false;
+      if (was !== plant.isPushed) armedAtRef.current[plant.id] = now + REARM_MS;
+      wasPushedRef.current[plant.id] = plant.isPushed;
+    }
+
     if (!enabled || !poses || poses.length === 0) {
+      tracksRef.current = {};
       if (hadActiveHandsRef.current) {
         hadActiveHandsRef.current = false;
         onHandActiveRef.current?.([]);
@@ -83,92 +114,59 @@ export const useLeafHandTracking = ({
       return;
     }
 
-    const now = performance.now();
     const activeHands: HandPoint[] = [];
+    const nextTracks: Record<string, Track> = {};
 
     poses.forEach((pose, personIdx) => {
       if (!pose) return;
+      for (const { hand, wrist, tip } of HANDS) {
+        const raw = readHand(pose, wrist, tip);
+        if (!raw) continue;
+        // 螢幕外的手不算
+        if (raw.x < 0 || raw.x > 1 || raw.y < 0 || raw.y > 1) continue;
 
-      // 嚴格僅讀取手部關鍵點 (15, 16, 19, 20)，絕不讀取頭部與軀幹點位 (0~12)
-      for (let h = 0; h < STRICT_HAND_LANDMARKS.length; h++) {
-        const { index, hand, suffix } = STRICT_HAND_LANDMARKS[h];
-        const point = pose[index];
-        if (!point) continue;
-        if (typeof point.visibility === 'number' && point.visibility < MIN_HAND_VISIBILITY) {
-          continue;
+        const id = `p${personIdx}-${hand}`;
+        const prev = tracksRef.current[id];
+        let track: Track;
+        if (!prev || now - prev.t > 500 || Math.hypot(raw.x - prev.x, raw.y - prev.y) > JUMP_RESET) {
+          track = { x: raw.x, y: raw.y, t: now, samples: [] };
+        } else {
+          const alpha = 1 - Math.exp(-(now - prev.t) / SMOOTH_TAU_MS);
+          track = {
+            x: prev.x + (raw.x - prev.x) * alpha,
+            y: prev.y + (raw.y - prev.y) * alpha,
+            t: now,
+            samples: prev.samples.filter((s) => now - s.t <= WAVE_WINDOW_MS),
+          };
         }
+        track.samples.push({ t: now, x: track.x, y: track.y });
+        nextTracks[id] = track;
 
-        // 離屏迷你畫布已轉正並套用鏡像，直接使用標準化螢幕座標 (0.0 ~ 1.0)
-        const screenX = point.x;
-        const screenY = point.y;
-        const id = `p${personIdx}-${suffix}`;
+        activeHands.push({ x: track.x * 100, y: track.y * 100, hand, id });
 
-        if (onHandActiveRef.current && (suffix === 'lw' || suffix === 'rw')) {
-          activeHands.push({
-            x: Math.max(0, Math.min(100, screenX * 100)),
-            y: Math.max(0, Math.min(100, screenY * 100)),
-            hand,
-            id,
-          });
-        }
-
-        const prev = prevHandsRef.current[id];
-        let speed = 0;
-        let frameDelta = 0;
-
-        if (prev) {
-          const dt = Math.max(1, now - prev.time);
-          // 僅在連續追蹤間隔合理（< 600ms）時計算揮動速度，防止離場再進場瞬間跳變誤觸
-          if (dt < 600) {
-            frameDelta = Math.hypot(screenX - prev.x, screenY - prev.y);
-            speed = (frameDelta / dt) * 1000;
-          }
-        }
-
-        prevHandsRef.current[id] = { x: screenX, y: screenY, time: now };
-
-        const isMoving = speed > MIN_WAVE_SPEED || frameDelta > MIN_FRAME_DISPLACEMENT;
-        if (!isMoving) continue;
-
-        const currentPlants = plantsRef.current;
-        for (let i = 0; i < currentPlants.length; i++) {
-          const plant = currentPlants[i];
+        // 每株植物：只算「終點落在植物範圍內」、而且在上膛之後的移動
+        const s = track.samples;
+        for (const plant of plantsRef.current) {
           if (plant.isPushed) continue;
-
-          const lastTrig = lastTriggerTimeRef.current[plant.id] || 0;
-          if (now - lastTrig < TRIGGER_DEBOUNCE_MS) continue;
-
-          const isBottomPlant = plant.positionType === 'bottom';
-
-          if (isBottomPlant) {
-            const isNearY = screenY > BOTTOM_TRIGGER_MIN_Y;
-            const isNearX =
-              plant.side === 'left'
-                ? screenX < BOTTOM_LEFT_MAX_X
-                : screenX > BOTTOM_RIGHT_MIN_X;
-
-            if (isNearX && isNearY) {
-              lastTriggerTimeRef.current[plant.id] = now;
-              onWaveStrokeRef.current(plant.id);
-              break;
-            }
-          } else {
-            const plantCenterY = ((plant.topPercent ?? 30) + 9) / 100;
-            const isNearY = Math.abs(screenY - plantCenterY) < SIDE_TRIGGER_RADIUS_Y;
-            const isNearX =
-              plant.side === 'left'
-                ? screenX < SIDE_LEFT_MAX_X
-                : screenX > SIDE_RIGHT_MIN_X;
-
-            if (isNearX && isNearY) {
-              lastTriggerTimeRef.current[plant.id] = now;
-              onWaveStrokeRef.current(plant.id);
-              break;
-            }
+          const armedAt = armedAtRef.current[plant.id] ?? 0;
+          if (now < armedAt) continue;
+          const z = plantZone(plant);
+          let path = 0;
+          for (let k = 1; k < s.length; k++) {
+            const b = s[k];
+            if (s[k - 1].t < armedAt) continue;
+            if (b.x < z.x1 || b.x > z.x2 || b.y < z.y1 || b.y > z.y2) continue;
+            path += Math.hypot((b.x - s[k - 1].x) * STAGE_ASPECT, b.y - s[k - 1].y);
+          }
+          if (path >= waveDistanceRef.current) {
+            armedAtRef.current[plant.id] = now + REARM_MS;
+            onWaveStrokeRef.current(plant.id);
+            break;
           }
         }
       }
     });
+    tracksRef.current = nextTracks;
 
     if (activeHands.length > 0) {
       hadActiveHandsRef.current = true;
