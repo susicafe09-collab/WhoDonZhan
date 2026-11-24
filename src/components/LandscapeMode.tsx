@@ -7,6 +7,9 @@ interface LandscapeModeProps {
   onActiveLandscapeChange?: (activeLandscape: string | null) => void;
 }
 
+// 網址加 &debug 時，畫面左上角即時列出三個手勢每個條件有沒有過（現場調門檻用）
+const SHOW_DEBUG = new URLSearchParams(window.location.search).has('debug');
+
 // 預載 3 張風景大圖以防淡入時閃爍
 const PRELOAD_LANDSCAPE_IMAGES = [
   '/Mountain_type_1.png',
@@ -22,7 +25,8 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
     pose3Opacity,
     userDistanceWarning,
     outOfFrameWarning,
-  } = useLandscapeTracking(poses);
+    debug,
+  } = useLandscapeTracking(poses, SHOW_DEBUG);
 
   const hasAnyPoseActive = activePose !== null;
   const lastEmittedRef = useRef<string | null>(null);
@@ -221,6 +225,29 @@ const LandscapeMode: React.FC<LandscapeModeProps> = ({ poses, onActiveLandscapeC
           </div>
         </div>
       </div>
+
+      {SHOW_DEBUG && (
+        <div className="absolute top-2 left-2 z-[60] rounded-lg bg-black/80 px-2.5 py-2 text-[11px] leading-tight text-white font-mono">
+          {debug ? (
+            debug.map((d) => (
+              <div key={d.pose} className="mb-1.5 last:mb-0">
+                <div className={d.matched ? 'text-[#7BE0DC] font-bold' : 'text-zinc-300'}>
+                  {d.matched ? '● ' : '○ '}
+                  {d.name}
+                </div>
+                {d.checks.map((c) => (
+                  <div key={c.label} className={c.ok ? 'text-zinc-300' : 'text-[#F28B82]'}>
+                    {c.ok ? '✓' : '✗'} {c.label}
+                    {c.core ? '' : '（次要）'}
+                  </div>
+                ))}
+              </div>
+            ))
+          ) : (
+            <div className="text-[#F28B82]">沒認到肩膀和兩隻手腕</div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
