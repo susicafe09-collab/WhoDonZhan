@@ -191,8 +191,8 @@ export const useAnimalTracking = (faces: any[], poses: any[]) => {
       const tracker = currentTrackers[i];
       const timeSinceLastSeen = now - tracker.lastSeenAt;
 
-      // 穩定出現 2 秒後啟動顯示
-      if (!tracker.isActive && now - tracker.firstSeenAt > 2000 && timeSinceLastSeen < 500) {
+      // 穩定出現 0.5 秒後啟動顯示（原本 2 秒，加上進場確認要等太久）
+      if (!tracker.isActive && now - tracker.firstSeenAt > 500 && timeSinceLastSeen < 500) {
         tracker.isActive = true;
         tracker.lastRotationAt = now;
       }
