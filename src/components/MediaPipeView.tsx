@@ -6,7 +6,6 @@ import {
   DEFAULT_WAVE_DISTANCE,
   plantZone,
 } from '../hooks/useLeafHandTracking';
-import { useScreenRatio } from '../hooks/useScreenRatio';
 import { useRightClickControls } from '../hooks/useRightClickControls';
 import AnimalMode from './AnimalMode';
 import LandscapeMode from './LandscapeMode';
@@ -27,7 +26,6 @@ import {
   Leaf,
   RefreshCw,
   AlertCircle,
-  Smartphone,
   Maximize2,
   Minimize2,
   RotateCcw,
@@ -150,7 +148,6 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   const [hasCamera, setHasCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const cameraErrorRef = useRef<string | null>(null);
-  const [isPhoneFrame, setIsPhoneFrame] = useState(true);
 
   // 原生 Fullscreen 狀態 (跨瀏覽器監聽同步)
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -159,10 +156,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
   const showControls = useRightClickControls();
   const immersive = isFullscreen || !showControls;
 
-  // 自動偵測螢幕比例與直／橫方向 (Portrait / Landscape)，同步根元素 .is-portrait
-  const { isPortrait, isWideLandscape, width: screenWidth, height: screenHeight } = useScreenRatio();
-
-  // 直式模式下可收合之底部平板測試抽屜（預設精簡收合，避免遮擋中央互動區）
+  // 底部平板測試抽屜（預設收合，避免遮擋中央互動區）
   const [showPortraitOverride, setShowPortraitOverride] = useState(false);
 
   // 互動舞台實際尺寸（提供旋轉 90° 的 1080p <video> 與 180x320 離屏畫布精確 1:1 對齊）
@@ -217,7 +211,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     activeMode,
     cameraRotation: effectiveCameraRotation,
     mirrorVideo: MIRROR_VIDEO,
-    isPortrait,
+    isPortrait: true, // 舞台固定是 9:16 直立畫面
     stageWidth: stageSize.width,
     stageHeight: stageSize.height,
     isInteractionUnlocked,
@@ -1084,12 +1078,12 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     };
   }, [startCamera]);
 
-  // 螢幕方向／尺寸切換時重新量測舞台像素寬高，確保旋轉 90° 的 1080p <video> 與離屏畫布精準對齊
+  // 叫出／收起設定或進出全螢幕後，重新量測舞台像素寬高，確保 <video> 與離屏畫布精準對齊
   useEffect(() => {
     recalcStageSize();
     const timer = window.setTimeout(recalcStageSize, 60);
     return () => window.clearTimeout(timer);
-  }, [isPortrait, screenWidth, screenHeight, immersive, isPhoneFrame, recalcStageSize]);
+  }, [immersive, recalcStageSize]);
 
   useEffect(() => {
     const stageEl = stageRef.current;
@@ -1118,22 +1112,13 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
     ? 'scaleX(-1)'
     : 'none';
 
-  const useViewportDims = isPortrait || immersive;
   const videoStyle: React.CSSProperties = isQuarterTurn
     ? {
         position: 'absolute',
         top: '50%',
         left: '50%',
-        width: useViewportDims
-          ? '100dvh'
-          : stageSize.height > 0
-          ? `${stageSize.height}px`
-          : '100dvh',
-        height: useViewportDims
-          ? '100vw'
-          : stageSize.width > 0
-          ? `${stageSize.width}px`
-          : '100vw',
+        width: stageSize.height > 0 ? `${stageSize.height}px` : '100dvh',
+        height: stageSize.width > 0 ? `${stageSize.width}px` : '100vw',
         maxWidth: 'none',
         maxHeight: 'none',
         objectFit: 'cover',
@@ -1156,36 +1141,18 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
   return (
     <div
-      className={`relative w-screen h-[100dvh] font-sans select-none overflow-hidden bg-[#0A0A0A] transition-all duration-300 ${
-        immersive
-          ? 'flex items-center justify-center p-0'
-          : isPortrait
-          ? 'portrait-stage-canvas block p-0'
-          : isWideLandscape
-          ? 'grid grid-cols-[minmax(0,1fr)_350px] lg:grid-cols-[minmax(0,1fr)_400px] grid-rows-[auto_minmax(0,1fr)] gap-x-6 lg:gap-x-8 gap-y-2.5 items-start justify-center max-w-[1220px] mx-auto px-5 py-3'
-          : 'grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)_auto] justify-items-center gap-1.5 p-1.5 sm:p-2'
-      }`}
+      className="relative w-screen h-[100dvh] font-sans select-none overflow-hidden bg-[#0A0A0A] flex items-center justify-center"
     >
       {/* ───────────────────────────────────────────────────────────── */}
       {/* Child 1：頂部導覽與三大模式切換群組                             */}
-      {/* - 直式 (.is-portrait)：自動懸浮錨定於頂部安全邊距 (Safe Area)，   */}
-      {/*   不擠壓亦不遮擋中央主互動區域                                  */}
-      {/* - 橫式寬螢幕：停靠於右側控制欄上方                              */}
+      {/* 浮在畫面最上方（右鍵叫出設定時才顯示）                       */}
       {/* ───────────────────────────────────────────────────────────── */}
       {!immersive && (
         <div
-          className={`flex flex-col gap-1.5 transition-all duration-300 ${
-            isPortrait
-              ? 'fixed top-0 left-0 right-0 z-55 portrait-safe-top items-center pointer-events-none'
-              : isWideLandscape
-              ? 'col-start-2 row-start-1 w-full z-40 pointer-events-auto'
-              : 'row-start-1 w-full max-w-lg items-center z-40 pointer-events-auto'
-          }`}
+          className="flex flex-col gap-1.5 fixed top-0 left-0 right-0 z-55 portrait-safe-top items-center pointer-events-none"
         >
           <header
-            className={`w-full flex items-center justify-between px-3.5 sm:px-4 py-2 dark-glow-card rounded-2xl text-zinc-300 pointer-events-auto ${
-              isPortrait ? 'max-w-[680px]' : ''
-            }`}
+            className="w-full max-w-[680px] flex items-center justify-between px-3.5 sm:px-4 py-2 dark-glow-card rounded-2xl text-zinc-300 pointer-events-auto"
           >
             <div className="flex items-center gap-2 relative z-10 min-w-0">
               <div className="w-2.5 h-2.5 rounded-full bg-[#28887A] shrink-0" />
@@ -1217,30 +1184,18 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
                 </button>
               )}
 
-              {!isPortrait && (
-                <button
-                  onClick={() => setIsPhoneFrame(!isPhoneFrame)}
-                  className="p-1.5 rounded-xl btn-dark-glow-inactive cursor-pointer"
-                  title={isPhoneFrame ? '切換為滿版視圖' : '切換為手機直式外框'}
-                >
-                  {isPhoneFrame ? <Maximize2 className="w-3.5 h-3.5 text-white" /> : <Smartphone className="w-3.5 h-3.5 text-zinc-300" />}
-                </button>
-              )}
-
-              {isPortrait && (
-                <button
-                  onClick={toggleFullscreen}
-                  className="p-1.5 rounded-xl btn-dark-glow-inactive text-[#4CA6A8] hover:text-white cursor-pointer"
-                  title="進入純淨全螢幕 (True Fullscreen)"
-                >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <button
+                onClick={toggleFullscreen}
+                className="p-1.5 rounded-xl btn-dark-glow-inactive text-[#4CA6A8] hover:text-white cursor-pointer"
+                title="進入純淨全螢幕 (True Fullscreen)"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
             </div>
           </header>
 
           {/* 外部三大模式切換選單 */}
-          <div className={`w-full pointer-events-auto ${isPortrait ? 'max-w-[680px]' : ''}`}>
+          <div className="w-full max-w-[680px] pointer-events-auto">
             <div className="dark-glow-card p-1.5 rounded-2xl flex items-center gap-1.5 justify-between">
               <button
                 id="mode-tab-leaves"
@@ -1296,39 +1251,20 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
       {/* ───────────────────────────────────────────────────────────── */}
       {/* Child 2：Main AR Camera Viewport Window (始終保持同一節點不重掛) */}
-      {/* - 直式 (.is-portrait)：100vw × 100dvh 滿版鋪滿，object-fit: cover */}
-      {/* - 橫式寬螢幕：左側滿高呈現 9:16 互動舞台                          */}
+      {/* 不管螢幕橫放直放，都在正中間放一塊 9:16 直立畫面            */}
       {/* ───────────────────────────────────────────────────────────── */}
       <div
         ref={viewportRef}
         id="unified-ar-viewport"
-        className={`overflow-hidden transition-all duration-300 flex items-center justify-center bg-black ${
-          immersive
-            ? 'fixed inset-0 z-50 w-screen h-[100dvh] max-w-none max-h-none rounded-none border-none p-0'
-            : isPortrait
-            ? 'fixed inset-0 z-10 w-screen h-[100dvh] max-w-none max-h-none rounded-none border-none p-0'
-            : isWideLandscape
-            ? isPhoneFrame
-              ? 'relative col-start-1 row-start-1 row-span-2 justify-self-center h-[calc(100dvh-1.5rem)] w-auto max-w-full aspect-[9/16] rounded-3xl border-none shadow-none'
-              : 'relative col-start-1 row-start-1 row-span-2 justify-self-stretch h-[calc(100dvh-1.5rem)] w-full rounded-3xl border-none shadow-none'
-            : isPhoneFrame
-            ? 'relative row-start-2 h-full min-h-0 w-auto max-w-full aspect-[9/16] rounded-3xl border-none shadow-none'
-            : 'relative row-start-2 w-full h-full min-h-0 max-w-[540px] rounded-3xl border-none shadow-none'
-        }`}
+        className="fixed inset-0 z-10 w-screen h-[100dvh] overflow-hidden flex items-center justify-center bg-black"
       >
         {/* 內層舞台容器 (stageRef)：透過 ResizeObserver 同步最新寬高與投影比例 */}
         <div
           ref={stageRef}
-          className={`relative h-full overflow-hidden flex items-center justify-center bg-black transition-all duration-300 ${
-            immersive
-              ? isPortrait
-                ? 'w-full'
-                : 'w-auto max-w-full aspect-[9/16]'
-              : 'w-full'
-          }`}
+          className="relative h-full w-auto max-w-full aspect-[9/16] overflow-hidden flex items-center justify-center bg-black"
         >
-          {/* 原生全螢幕切換按鈕：橫式視窗或全螢幕時呈現（直式非全螢幕時移至頂部導覽列避免重疊） */}
-          {showControls && (isFullscreen || !isPortrait) && (
+          {/* 全螢幕時的退出按鈕（進入全螢幕的按鈕在頂部導覽列） */}
+          {showControls && isFullscreen && (
             <button
               onClick={toggleFullscreen}
               className="absolute z-55 p-2.5 rounded-full bg-[#1A1A1A] hover:bg-[#28887A] text-[#4CA6A8] hover:text-white border-none shadow-none transition-all duration-200 active:scale-90 pointer-events-auto cursor-pointer"
@@ -1352,7 +1288,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
               className="absolute left-4 right-4 sm:right-14 z-45 flex items-center justify-between gap-2 px-3 py-2 rounded-xl dark-glow-card text-zinc-100 text-xs animate-fade-in pointer-events-auto"
               style={{
                 top:
-                  isPortrait && !immersive
+                  !immersive
                     ? 'calc(var(--safe-top, 0px) + 6.8rem)'
                     : '1rem',
               }}
@@ -1518,21 +1454,13 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
       {/* ───────────────────────────────────────────────────────────── */}
       {/* Child 3：控制與連動測試面板                                    */}
-      {/* - 直式 (.is-portrait)：自動錨定至底部安全邊距 (Safe Area)，     */}
-      {/*   預設精簡高度並支援收合測試面板，確保中央互動區域完全不被遮擋     */}
-      {/* - 橫式寬螢幕：停靠於右側控制欄下方                              */}
+      {/* 浮在畫面最下方，測試按鈕可收合                             */}
       {/* ───────────────────────────────────────────────────────────── */}
       {!immersive && (
         <div
-          className={`flex flex-col items-center gap-1.5 transition-all duration-300 ${
-            isPortrait
-              ? 'fixed bottom-0 left-0 right-0 z-55 portrait-safe-bottom pointer-events-none'
-              : isWideLandscape
-              ? 'col-start-2 row-start-2 w-full max-h-full overflow-y-auto pr-0.5 z-30 pointer-events-auto'
-              : 'row-start-3 w-full max-w-[440px] z-30 pointer-events-auto'
-          }`}
+          className="flex flex-col items-center gap-1.5 fixed bottom-0 left-0 right-0 z-55 portrait-safe-bottom pointer-events-none"
         >
-          <div className={`w-full flex flex-col gap-1.5 pointer-events-auto ${isPortrait ? 'max-w-[680px]' : ''}`}>
+          <div className="w-full max-w-[680px] flex flex-col gap-1.5 pointer-events-auto">
           {/* 撥開葉子專屬參數抽屜與動作 */}
           {activeMode === 'leaves' && (
             <>
@@ -1614,29 +1542,26 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
 
           {/* ═══════════════════════════════════════════════════════════ */}
           {/* 展場人員專用：「平板連動測試 (Socket Override)」控制卡片      */}
-          {/* 直式模式下可收合，避免佔用畫面高度並維持底部安全留白            */}
+          {/* 可收合，避免佔用畫面高度                                      */}
           {/* ═══════════════════════════════════════════════════════════ */}
           <div className="w-full dark-glow-card rounded-2xl p-2 sm:p-2.5 border-none shadow-none">
             <div
               className={`flex flex-wrap items-center justify-between gap-1.5 px-1 relative z-10 ${
-                !isPortrait || showPortraitOverride ? 'pb-2 border-b border-zinc-800 mb-2' : ''
+                showPortraitOverride ? 'pb-2 border-b border-zinc-800 mb-2' : ''
               }`}
             >
               <button
                 type="button"
-                onClick={() => isPortrait && setShowPortraitOverride((prev) => !prev)}
-                className={`text-[11px] font-medium text-white flex items-center gap-1.5 ${
-                  isPortrait ? 'cursor-pointer' : 'cursor-default'
-                }`}
+                onClick={() => setShowPortraitOverride((prev) => !prev)}
+                className="text-[11px] font-medium text-white flex items-center gap-1.5 cursor-pointer"
               >
                 <Radio className="w-3.5 h-3.5 text-[#4CA6A8]" />
                 <span>平板連動測試 (Socket Override)</span>
-                {isPortrait &&
-                  (showPortraitOverride ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
-                  ) : (
-                    <ChevronUp className="w-3.5 h-3.5 text-zinc-400" />
-                  ))}
+                {showPortraitOverride ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+                ) : (
+                  <ChevronUp className="w-3.5 h-3.5 text-zinc-400" />
+                )}
               </button>
 
               {/* 分離之專屬看板快速開啟連結 (Board 1, Board 2, Board 3) */}
@@ -1690,7 +1615,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             </div>
 
             {/* 快速手動切換按鈕組 (含測試撥開葉子、動物、山景與待機) - 平面純色膠囊 */}
-            {(!isPortrait || showPortraitOverride) && (
+            {showPortraitOverride && (
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 relative z-10">
                 <button
                   onClick={() => handleManualSyncTest('leaf_parted', 'leaves')}
@@ -1780,11 +1705,7 @@ export const MediaPipeView: React.FC<MediaPipeViewProps> = ({
             {/* 6 植物卡片清單 */}
             <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 relative z-10">
               <div
-                className={`grid gap-4 ${
-                  isPortrait
-                    ? 'grid-cols-1 sm:grid-cols-2'
-                    : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3'
-                }`}
+                className="grid gap-4 grid-cols-1 sm:grid-cols-2"
               >
                 {currentActivePlants.map((plant) => {
                   const conciseDesc =
